@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>How I Built an Automated AI-Powered Content Distribution System</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.7; color: #222; max-width: 760px; margin: 0 auto; padding: 40px 20px; }
+    h1 { font-size: 2.2rem; margin-bottom: 0.5rem; }
+    h2 { font-size: 1.6rem; margin-top: 2.5rem; border-bottom: 1px solid #eee; padding-bottom: 8px; }
+    h3 { font-size: 1.25rem; margin-top: 2rem; }
+    code, pre { font-family: "SF Mono", Consolas, Monaco, monospace; }
+    pre { background: #f6f8fa; padding: 16px; border-radius: 6px; overflow-x: auto; font-size: 0.9rem; }
+    code { background: #f0f0f0; padding: 2px 6px; border-radius: 4px; }
+    ul, ol { padding-left: 24px; }
+    a { color: #0366d6; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .intro { color: #555; font-size: 1.1rem; margin-bottom: 2rem; }
+  </style>
+</head>
+<body>
+
+<h1>How I Built an Automated AI-Powered Content Distribution System</h1>
+
+<p class="intro">
+  This post walks through the entire build of an automated content distribution app that generates blog posts with AI and publishes them to WordPress, LinkedIn, Facebook, and Instagram on a schedule. It runs on free tiers.
+</p>
+
+<h2>What the project does</h2>
+
+<p>The app is called <strong>Auto-Poster</strong>. It is a Cloudflare Worker that does the following automatically:</p>
+
+<ul>
+  <li>Generates 1000+ word SEO blog posts with featured images.</li>
+  <li>Publishes the full blog post to WordPress twice per week.</li>
+  <li>Publishes adapted social posts to LinkedIn, Facebook, and Instagram twice per day.</li>
+  <li>Picks unique topics from RSS feeds and a static list, storing used topics in Cloudflare KV to avoid duplicates.</li>
+  <li>Sends email notifications for every successful or failed run via Resend.</li>
+  <li>Uses Unsplash, Pollinations, and Cloudflare Workers AI for featured images.</li>
+  <li>Falls back through multiple free text APIs: Groq allam-2-7b, Groq qwen, and free.ai.</li>
+</ul>
+
+<h2>Tech stack</h2>
+
+<ul>
+  <li>Cloudflare Workers for the runtime and cron scheduling.</li>
+  <li>Cloudflare KV for topic deduplication.</li>
+  <li>Groq and free.ai OpenAI-compatible APIs for text generation.</li>
+  <li>Cloudflare Workers AI for image fallback.</li>
+  <li>WordPress REST API for the blog.</li>
+  <li>LinkedIn, Facebook, and Instagram APIs for social posts.</li>
+  <li>Resend for email notifications.</li>
+</ul>
+
+<h2>Step 1: Create the Cloudflare Worker project</h2>
+
+<p>I created a new directory and used Wrangler to scaffold a Cloudflare Worker project. The main file is <code>src/index.js</code>, and the config is in <code>wrangler.toml</code>.</p>
+
+<pre>npx create-cloudflare command-center
+cd command-center
+npm install</pre>
+
+<p>The Worker exposes two handlers: <code>fetch</code> for manual posts and helper endpoints, and <code>scheduled</code> for cron-triggered posts.</p>
+
+<h2>Step 2: Generate text with fallback AI models</h2>
+
+<p>I use the Groq API through an OpenAI-compatible endpoint. The prompt asks the model to return the post in a strict format with title, slug, focus keyword, meta description, excerpt, tags, and a long HTML body.</p>
+
+<p>If the primary Groq model <code>allam-2-7b</code> fails, the Worker tries <code>qwen/qwen3.6-27b</code>. If that also fails, it calls <code>free.ai</code> with models like <code>qwen7b</code> and <code>mistral</code> before giving up.</p>
+
+<h2>Step 3: Generate and upload the featured image</h2>
+
+<p>The image generation works in three layers:</p>
+
+<ol>
+  <li><strong>Unsplash</strong> for real stock photos.</li>
+  <li><strong>Pollinations</strong> for AI images.</li>
+  <li><strong>Cloudflare Workers AI</strong> as a final fallback.</li>
+</ol>
+
+<h2>Step 4: Publish to WordPress</h2>
+
+<p>The Worker creates a WordPress post through the REST API and sets the following fields:</p>
+
+<ul>
+  <li>Title, slug, content, status, and excerpt.</li>
+  <li>Featured media.</li>
+  <li>Yoast and RankMath SEO meta.</li>
+</ul>
+
+<h2>Step 5: Post to social platforms</h2>
+
+<ul>
+  <li><strong>LinkedIn</strong> with native image upload.</li>
+  <li><strong>Facebook</strong> with a social-style caption using the excerpt.</li>
+  <li><strong>Instagram</strong> with a 10-second wait for media readiness.</li>
+</ul>
+
+<h2>Step 6: Email notifications with Resend</h2>
+
+<p>The Worker emails a summary after every run. The <code>FROM_EMAIL</code> domain must be verified in Resend.</p>
+
+<h2>Limitations and pain points</h2>
+
+<ul>
+  <li>Built only with free services.</li>
+  <li>Built end-to-end with the free Devin SWE-1.7 coding model.</li>
+  <li>The AI has a training cutoff, so current events come from RSS titles, not live research.</li>
+  <li>Free models can be short or produce strange formatting.</li>
+  <li>Facebook and Instagram tokens expire quickly without the custom refresh endpoint.</li>
+  <li>Resend requires domain verification.</li>
+</ul>
+
+<p>The repo is public at <a href="https://github.com/chadfuse/command-center">github.com/chadfuse/command-center</a>, and the README includes full setup instructions.</p>
+
+</body>
+</html>

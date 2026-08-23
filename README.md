@@ -246,11 +246,18 @@ This prevents duplicate posts. If all topics have been used, the run is skipped.
 .
 ├── .dev.vars.example
 ├── .gitignore
+├── linkedin-post.html
 ├── package.json
+├── project-blogpost.html
 ├── README.md
 ├── src/index.js
 └── wrangler.toml
 ```
+
+## Project write-up
+
+- `project-blogpost.html` — a full HTML blog post about the project.
+- `linkedin-post.html` — a plain-text LinkedIn version. Open the file and copy the text inside the gray box.
 
 ## License
 
