@@ -1,0 +1,18 @@
+# Copy this file to .dev.vars and fill in your real values.
+# .dev.vars is NOT committed to Git and is only used by wrangler dev.
+#
+# Free text API options:
+#   - Groq free tier: https://console.groq.com (OpenAI-compatible)
+#   - free.ai: https://free.ai (30k tokens/day, no card)
+#   - Google Gemini: https://aistudio.google.com (not OpenAI-compatible; requires adapter)
+#
+# Only the API key and WordPress password need to be secret.
+# Add TEXT_API_URL and TEXT_MODEL here if you want to override wrangler.toml defaults.
+TEXT_API_KEY=gsk_...
+
+# WordPress credentials for testing (also needed in .dev.vars).
+# In production, set WP_APP_PASSWORD with `wrangler secret put WP_APP_PASSWORD`.
+WP_URL=https://yourblog.com
+WP_USERNAME=your_wp_username
+WP_APP_PASSWORD=XXXX XXXX XXXX XXXX XXXX
+WP_STATUS=draft
