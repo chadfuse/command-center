@@ -21,15 +21,46 @@ function slugify(text) {
     .replace(/-$/, '');
 }
 
-async function generateText({ topic, niche }, env) {
+async function callTextApi(messages, maxTokens, env) {
   const apiUrl = env.TEXT_API_URL;
   const apiKey = env.TEXT_API_KEY;
-  const model = env.TEXT_MODEL || DEFAULT_TEXT_MODEL;
+  const models = [env.TEXT_MODEL, env.FALLBACK_TEXT_MODEL].filter(Boolean);
 
   if (!apiUrl || !apiKey) {
     throw new Error('TEXT_API_URL and TEXT_API_KEY must be set in your Worker secrets/env. See .dev.vars.example.');
   }
 
+  let lastError = null;
+  for (const model of models) {
+    const res = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        temperature: 0.7,
+        max_tokens: maxTokens,
+      }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      const raw = data.choices?.[0]?.message?.content ?? '';
+      if (raw) return raw;
+      lastError = new Error('Text API returned empty content');
+    } else {
+      const err = await res.text();
+      lastError = new Error(`Text API error ${res.status}: ${err}`);
+    }
+  }
+
+  throw lastError || new Error('Text API failed for all configured models');
+}
+
+async function generateText({ topic, niche }, env) {
   const system = `You are an expert, human ${niche} content writer and SEO specialist.
 
 Return the content using this exact format, with each field on its own line and the BODY at the end:
@@ -44,30 +75,10 @@ BODY: <comprehensive, human, original HTML content of at least 1000 words. Do no
 Do not add explanations, notes, or sections outside this format.`;
   const user = `Write a comprehensive, up-to-date, SEO-optimized blog post about: ${topic}`;
 
-  const res = await fetch(apiUrl, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'authorization': `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: user },
-      ],
-      temperature: 0.7,
-      max_tokens: 2000,
-    }),
-  });
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Text API error ${res.status}: ${err}`);
-  }
-
-  const data = await res.json();
-  const raw = data.choices?.[0]?.message?.content ?? '';
+  const raw = await callTextApi([
+    { role: 'system', content: system },
+    { role: 'user', content: user },
+  ], 2000, env);
 
   const fields = {
     title: /^TITLE:\s*(.+?)$/im,
@@ -123,36 +134,12 @@ function countWords(html) {
 }
 
 async function expandBody({ body, title, niche }, env) {
-  const apiUrl = env.TEXT_API_URL;
-  const apiKey = env.TEXT_API_KEY;
-  const model = env.TEXT_MODEL || DEFAULT_TEXT_MODEL;
-
   const prompt = `You are an expert, human ${niche} content writer. Expand the following blog post to at least 1000 words total. Keep the existing HTML structure and content, but add more detail, examples, and practical subsections. Do not change the title. Return the complete expanded HTML body only. Do not wrap it in markdown code blocks.\n\nTitle: ${title}\n\n${body}`;
 
-  const res = await fetch(apiUrl, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'authorization': `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: 'system', content: 'You are a helpful content expansion assistant. Return HTML body only.' },
-        { role: 'user', content: prompt },
-      ],
-      temperature: 0.7,
-      max_tokens: 1500,
-    }),
-  });
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Text API error ${res.status}: ${err}`);
-  }
-
-  const data = await res.json();
-  let raw = data.choices?.[0]?.message?.content ?? '';
+  let raw = await callTextApi([
+    { role: 'system', content: 'You are a helpful content expansion assistant. Return HTML body only.' },
+    { role: 'user', content: prompt },
+  ], 1500, env);
   raw = raw.replace(/^```html\n?/, '').replace(/```\s*$/, '').trim();
   if (!raw.startsWith('<')) {
     raw = `<p>${raw.replace(/\n\n/g, '</p><p>')}</p>`;
