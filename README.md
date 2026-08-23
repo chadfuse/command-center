@@ -70,6 +70,18 @@ TEXT_MODEL = "allam-2-7b"
 
 You can override them by editing `wrangler.toml` or setting `TEXT_API_URL` / `TEXT_MODEL` in `.dev.vars`.
 
+#### Optional fallback provider (e.g. free.ai)
+
+If you want a third-level fallback, set a different OpenAI-compatible endpoint:
+
+```bash
+npx wrangler secret put FALLBACK_TEXT_API_URL  # e.g. https://api.free.ai/v1/chat/completions
+npx wrangler secret put FALLBACK_TEXT_API_KEY
+npx wrangler secret put FALLBACK_TEXT_API_MODEL
+```
+
+The Worker tries the primary Groq model, then the Groq fallback model, then this external provider. If all three fail, the run errors out.
+
 ### 2. WordPress
 
 Set the site URL and username as public variables:

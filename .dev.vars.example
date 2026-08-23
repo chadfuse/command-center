@@ -10,6 +10,12 @@
 # Add TEXT_API_URL and TEXT_MODEL here if you want to override wrangler.toml defaults.
 TEXT_API_KEY=gsk_...
 
+# Optional second fallback provider (e.g. free.ai).
+# Used only if both TEXT_MODEL and FALLBACK_TEXT_MODEL in wrangler.toml fail.
+# FALLBACK_TEXT_API_URL=https://api.free.ai/v1/chat/completions
+# FALLBACK_TEXT_API_KEY=
+# FALLBACK_TEXT_API_MODEL=
+
 # WordPress credentials for testing (also needed in .dev.vars).
 # In production, set WP_APP_PASSWORD with `wrangler secret put WP_APP_PASSWORD`.
 WP_URL=https://yourblog.com

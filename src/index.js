@@ -57,7 +57,32 @@ async function callTextApi(messages, maxTokens, env) {
     }
   }
 
-  throw lastError || new Error('Text API failed for all configured models');
+  if (env.FALLBACK_TEXT_API_URL && env.FALLBACK_TEXT_API_KEY && env.FALLBACK_TEXT_API_MODEL) {
+    const res = await fetch(env.FALLBACK_TEXT_API_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'authorization': `Bearer ${env.FALLBACK_TEXT_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: env.FALLBACK_TEXT_API_MODEL,
+        messages,
+        temperature: 0.7,
+        max_tokens: maxTokens,
+      }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      const raw = data.choices?.[0]?.message?.content ?? '';
+      if (raw) return raw;
+    } else {
+      const err = await res.text();
+      lastError = new Error(`Fallback text API error ${res.status}: ${err}`);
+    }
+  }
+
+  throw lastError || new Error('Text API failed for all configured models and fallback providers');
 }
 
 async function generateText({ topic, niche }, env) {
