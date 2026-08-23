@@ -14,7 +14,8 @@ TEXT_API_KEY=gsk_...
 # Used only if both TEXT_MODEL and FALLBACK_TEXT_MODEL in wrangler.toml fail.
 # FALLBACK_TEXT_API_URL=https://api.free.ai/v1/chat/completions
 # FALLBACK_TEXT_API_KEY=
-# FALLBACK_TEXT_API_MODEL=
+# FALLBACK_TEXT_API_MODEL=single-model-id
+# FALLBACK_TEXT_API_MODELS=["model-id-1","model-id-2"]
 
 # WordPress credentials for testing (also needed in .dev.vars).
 # In production, set WP_APP_PASSWORD with `wrangler secret put WP_APP_PASSWORD`.

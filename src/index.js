@@ -57,28 +57,34 @@ async function callTextApi(messages, maxTokens, env) {
     }
   }
 
-  if (env.FALLBACK_TEXT_API_URL && env.FALLBACK_TEXT_API_KEY && env.FALLBACK_TEXT_API_MODEL) {
-    const res = await fetch(env.FALLBACK_TEXT_API_URL, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'authorization': `Bearer ${env.FALLBACK_TEXT_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: env.FALLBACK_TEXT_API_MODEL,
-        messages,
-        temperature: 0.7,
-        max_tokens: maxTokens,
-      }),
-    });
+  if (env.FALLBACK_TEXT_API_URL && env.FALLBACK_TEXT_API_KEY) {
+    const fallbackModels = env.FALLBACK_TEXT_API_MODELS
+      ? JSON.parse(env.FALLBACK_TEXT_API_MODELS)
+      : (env.FALLBACK_TEXT_API_MODEL ? [env.FALLBACK_TEXT_API_MODEL] : []);
 
-    if (res.ok) {
-      const data = await res.json();
-      const raw = data.choices?.[0]?.message?.content ?? '';
-      if (raw) return raw;
-    } else {
-      const err = await res.text();
-      lastError = new Error(`Fallback text API error ${res.status}: ${err}`);
+    for (const model of fallbackModels) {
+      const res = await fetch(env.FALLBACK_TEXT_API_URL, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'authorization': `Bearer ${env.FALLBACK_TEXT_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages,
+          temperature: 0.7,
+          max_tokens: maxTokens,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const raw = data.choices?.[0]?.message?.content ?? '';
+        if (raw) return raw;
+      } else {
+        const err = await res.text();
+        lastError = new Error(`Fallback text API error ${res.status}: ${err}`);
+      }
     }
   }
 

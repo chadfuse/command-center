@@ -77,10 +77,21 @@ If you want a third-level fallback, set a different OpenAI-compatible endpoint:
 ```bash
 npx wrangler secret put FALLBACK_TEXT_API_URL  # e.g. https://api.free.ai/v1/chat/completions
 npx wrangler secret put FALLBACK_TEXT_API_KEY
-npx wrangler secret put FALLBACK_TEXT_API_MODEL
 ```
 
-The Worker tries the primary Groq model, then the Groq fallback model, then this external provider. If all three fail, the run errors out.
+You can set one model:
+
+```bash
+npx wrangler secret put FALLBACK_TEXT_API_MODEL  # e.g. meta-llama/llama-3.1-8b-instruct
+```
+
+Or multiple models as a JSON array:
+
+```bash
+npx wrangler secret put FALLBACK_TEXT_API_MODELS  # e.g. ["model-1","model-2"]
+```
+
+The Worker tries the primary Groq model, then the Groq fallback model, then each external model in order. If all of them fail, the run errors out.
 
 ### 2. WordPress
 
