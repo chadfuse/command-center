@@ -2,3 +2,5 @@ node_modules/
 .dev.vars
 .wrangler/
 dist/
+project-blogpost.html
+linkedin-post.html
