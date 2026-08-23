@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LinkedIn Post: Automated AI Content Distribution</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.7;
+      color: #222;
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 40px 20px;
+    }
+    .note { color: #666; font-size: 0.9rem; margin-bottom: 2rem; }
+    .post {
+      white-space: pre-wrap;
+      font-size: 1.05rem;
+      line-height: 1.8;
+      background: #f9f9f9;
+      padding: 24px;
+      border-radius: 8px;
+    }
+    a { color: #0366d6; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+<p class="note">
+  LinkedIn does not support HTML posts. Copy the plain text below and paste it into your LinkedIn post. The HTML file is just a preview.
+</p>
+
+<div class="post">
+I built a fully automated content distribution system that writes and publishes blog and social posts using only free services.
+
+No paid AI. No paid schedulers. No paid email service. Everything runs on Cloudflare Workers, Groq's free model, Resend, Unsplash, and Pollinations.
+
+It was also built end-to-end with the free Devin SWE-1.7 coding agent, which handled every file, API integration, and debug session.
+
+What it does:
+
+✅ Generates 1000+ word SEO blog posts with featured images
+✅ Publishes to WordPress twice per week
+✅ Publishes to LinkedIn, Facebook, and Instagram twice per day
+✅ Pulls unique topics from RSS feeds and deduplicates them with Cloudflare KV
+✅ Emails me a summary of every success or failure
+
+The messy parts I had to solve:
+
+⚠ The free 7B model often wrote short content, so I added an expansion loop to reach 1000 words
+⚠ Free AI images were unpredictable, so I switched the image source to Unsplash first and kept AI as a fallback
+⚠ Facebook and Instagram tokens expired every hour, so I built a helper endpoint to exchange short-lived tokens for long-lived Page tokens
+⚠ Resend emails did not deliver until my domain was fully verified with DNS records
+⚠ Instagram required a 10-second delay between media creation and publish
+
+It is not perfect. The AI cannot browse live news, the images are sometimes generic, and the rate limits keep me honest. But as a free, hands-off content engine, it is working.
+
+Full write-up is in the project repo:
+https://github.com/chadfuse/command-center
+
+If you are building with free tools, what is the biggest limitation you have hit?
+</div>
+
+</body>
+</html>

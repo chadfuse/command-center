@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>How I Built an Automated AI-Powered Content Distribution System</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.7;
+      color: #222;
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 40px 20px;
+    }
+    h1 { font-size: 2.2rem; margin-bottom: 0.5rem; }
+    h2 { font-size: 1.6rem; margin-top: 2.5rem; border-bottom: 1px solid #eee; padding-bottom: 8px; }
+    h3 { font-size: 1.25rem; margin-top: 2rem; }
+    code, pre { font-family: "SF Mono", Consolas, Monaco, monospace; }
+    pre {
+      background: #f6f8fa;
+      padding: 16px;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-size: 0.9rem;
+    }
+    code { background: #f0f0f0; padding: 2px 6px; border-radius: 4px; }
+    ul, ol { padding-left: 24px; }
+    a { color: #0366d6; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .intro { color: #555; font-size: 1.1rem; margin-bottom: 2rem; }
+    .note { background: #fffbea; border-left: 4px solid #f0ad4e; padding: 12px 16px; margin: 1.5rem 0; }
+    .step { margin-bottom: 2rem; }
+  </style>
+</head>
+<body>
+
+<h1>How I Built an Automated AI-Powered Content Distribution System</h1>
+
+<p class="intro">
+  This post walks through the entire build of an automated content distribution app that generates blog posts with AI and publishes them to WordPress, LinkedIn, Facebook, and Instagram on a schedule. It runs entirely on free tiers and is deployed on Cloudflare Workers.
+</p>
+
+<h2>What the project does</h2>
+
+<p>
+  The app is called <strong>Auto-Poster</strong>. It is a Cloudflare Worker that does the following automatically:
+</p>
+
+<ul>
+  <li>Generates 1000+ word SEO blog posts with a featured image.</li>
+  <li>Publishes the full blog post to WordPress twice per week.</li>
+  <li>Publishes adapted social posts to LinkedIn, Facebook, and Instagram twice per day.</li>
+  <li>Picks unique topics from RSS feeds and a static list, storing used topics in KV to avoid duplicates.</li>
+  <li>Sends email notifications for every successful or failed run via Resend.</li>
+  <li>Supports real stock images from Unsplash with AI fallbacks from Pollinations and Cloudflare Workers AI.</li>
+</ul>
+
+<h2>Tech stack</h2>
+
+<ul>
+  <li>Cloudflare Workers for the runtime and cron scheduling.</li>
+  <li>Cloudflare KV for topic deduplication and queue state.</li>
+  <li>Groq OpenAI-compatible API for text generation.</li>
+  <li>Cloudflare Workers AI for image fallback.</li>
+  <li>WordPress REST API for the blog.</li>
+  <li>LinkedIn, Facebook, and Instagram APIs for social posts.</li>
+  <li>Resend for email notifications.</li>
+</ul>
+
+<h2>Step 1: Create the Cloudflare Worker project</h2>
+
+<p>I created a new directory and used Wrangler to scaffold a Cloudflare Worker project. The main file is <code>src/index.js</code>, and the config is in <code>wrangler.toml</code>.</p>
+
+<pre>npx create-cloudflare command-center
+cd command-center
+npm install</pre>
+
+<p>The Worker exposes two handlers:</p>
+
+<ul>
+  <li><code>fetch</code> — for manual posts and helper endpoints.</li>
+  <li><code>scheduled</code> — for cron-triggered posts.</li>
+</ul>
+
+<h2>Step 2: Generate text with an AI model</h2>
+
+<p>
+  I use the Groq API through an OpenAI-compatible endpoint. The prompt asks the model to return the post in a strict format with title, slug, focus keyword, meta description, excerpt, tags, and a long HTML body.
+</p>
+
+<p>
+  The model sometimes produced shorter content, so I added an expansion step. After the first generation, the Worker counts words. If the body is under 800 words, it sends the draft back to the model with an instruction to expand it to at least 1000 words.
+</p>
+
+<h2>Step 3: Generate and upload the featured image</h2>
+
+<p>The image generation works in three layers:</p>
+
+<ol>
+  <li><strong>Unsplash</strong> — if an <code>UNSPLASH_ACCESS_KEY</code> is set, the Worker searches Unsplash for a real stock photo related to the topic and uploads it to WordPress.</li>
+  <li><strong>Pollinations</strong> — if Unsplash fails or is not configured, it calls the free Pollinations AI image API.</li>
+  <li><strong>Cloudflare Workers AI</strong> — as a final fallback, it uses <code>@cf/black-forest-labs/flux-1-schnell</code>.</li>
+</ol>
+
+<p>The image is always uploaded to WordPress so it has a public URL. That URL is required by Instagram, which cannot pull images from a local source.</p>
+
+<h2>Step 4: Publish to WordPress</h2>
+
+<p>The Worker creates a WordPress post through the REST API and sets the following fields:</p>
+
+<ul>
+  <li>Title, slug, content, status, and excerpt.</li>
+  <li>Featured media.</li>
+  <li>Yoast SEO meta: <code>_yoast_wpseo_title</code>, <code>_yoast_wpseo_metadesc</code>, and <code>_yoast_wpseo_focuskw</code>.</li>
+  <li>RankMath SEO meta: <code>rank_math_title</code>, <code>rank_math_description</code>, and <code>rank_math_focus_keyword</code>.</li>
+</ul>
+
+<p>
+  The scheduled cron for WordPress uses <code>status: publish</code>. Manual test calls can override this to <code>draft</code> by setting <code>"wp": { "status": "draft" }</code>.
+</p>
+
+<h2>Step 5: Post to LinkedIn</h2>
+
+<p>
+  LinkedIn posting uses the <code>/v2/ugcPosts</code> endpoint. The text includes the title, a short body preview, and a link to the WordPress post. To avoid the boring text-only look, I added an image upload flow:
+</p>
+
+<ol>
+  <li>The Worker downloads the featured image from WordPress.</li>
+  <li>It registers the image asset with LinkedIn.</li>
+  <li>It uploads the binary to the pre-signed upload URL.</li>
+  <li>It creates the LinkedIn post with <code>shareMediaCategory: "IMAGE"</code>.</li>
+</ol>
+
+<h2>Step 6: Post to Facebook</h2>
+
+<p>
+  Facebook posts are published to a Facebook Page using a Page token. The message format is different from the blog: it uses the title, the excerpt, and a social CTA instead of the full blog body, so it does not look like a copy-paste of the article.
+</p>
+
+<p>
+  The link shared on Facebook falls back to the WordPress homepage when a new blog post is not available on that run.
+</p>
+
+<h2>Step 7: Post to Instagram</h2>
+
+<p>
+  Instagram requires a Business or Creator account and a Facebook token with <code>instagram_basic</code> and <code>instagram_content_publish</code> permissions. The Worker does the following:
+</p>
+
+<ol>
+  <li>Creates a media container with the public WordPress image URL and a short caption.</li>
+  <li>Waits 10 seconds for the media to be ready.</li>
+  <li>Publishes the media container.</li>
+  <li>Fetches the final <code>permalink</code> and <code>shortcode</code> so the response contains the live Instagram URL.</li>
+</ol>
+
+<h2>Step 8: Avoid duplicate topics with RSS feeds and KV</h2>
+
+<p>
+  To keep every post unique, the Worker fetches four RSS feeds and combines them with a static <code>CRON_TOPICS</code> list. It then checks a Cloudflare KV namespace called <code>POSTED_TOPICS</code> for the slugified topic. If a topic was already used, it skips it. After a successful post, it stores the topic in KV.
+</p>
+
+<p>This means the schedule can keep running without repeating the same content.</p>
+
+<h2>Step 9: Add cron scheduling</h2>
+
+<p>The cron triggers in <code>wrangler.toml</code> are:</p>
+
+<pre>[triggers]
+crons = ["0 8 * * 1,4", "0 10 * * *", "0 18 * * *"]</pre>
+
+<ul>
+  <li><strong>Monday and Thursday at 08:00 UTC</strong> — WordPress blog post.</li>
+  <li><strong>Every day at 10:00 and 18:00 UTC</strong> — LinkedIn, Facebook, and Instagram.</li>
+</ul>
+
+<h2>Step 10: Long-lived Facebook and Instagram tokens</h2>
+
+<p>
+  Tokens from the Graph API Explorer expire in about an hour. To avoid resetting them constantly, I added a <code>/refresh-facebook-token</code> helper endpoint. The user sends their Facebook App ID, App Secret, short-lived User token, and Page ID, and the Worker exchanges it for a long-lived Page token.
+</p>
+
+<p>
+  This same token is used for both Facebook and Instagram, so you only need to refresh one credential.
+</p>
+
+<h2>Step 11: Email notifications with Resend</h2>
+
+<p>
+  I integrated Resend so the Worker emails a summary after every run. The <code>NOTIFICATION_EMAIL</code> and <code>FROM_EMAIL</code> are configured in <code>wrangler.toml</code>, and the <code>RESEND_API_KEY</code> is stored as a secret.
+</p>
+
+<p>
+  To send to any third-party email address, the <code>FROM_EMAIL</code> domain must be verified in Resend by adding the DNS records it provides.
+</p>
+
+<h2>Step 12: Deploy and push to GitHub</h2>
+
+<p>The project is deployed with:</p>
+
+<pre>npx wrangler deploy</pre>
+
+<p>And pushed to a private GitHub repo at <code>chadfuse/command-center</code> using <code>gh</code>.</p>
+
+<h2>How to use it manually</h2>
+
+<p>You can trigger a single post with a curl request:</p>
+
+<pre>curl -X POST https://auto-poster.chadfuse.workers.dev \
+  -H 'content-type: application/json' \
+  -d '{
+    "topic": "How to use AI to speed up WordPress development",
+    "niche": "AI and WordPress development",
+    "platforms": ["wordpress", "linkedin", "facebook", "instagram"],
+    "wp": { "status": "publish" }
+  }'</pre>
+
+<h2>What went wrong and how I fixed it</h2>
+
+<ul>
+  <li><strong>LinkedIn image posts failed</strong> — LinkedIn <code>ARTICLE</code> media requires a registered asset. I switched to uploading the image first as an <code>IMAGE</code> asset.</li>
+  <li><strong>Instagram caption too long</strong> — I switched the caption to use the excerpt instead of a large body slice.</li>
+  <li><strong>Facebook token expired every hour</strong> — I built the <code>/refresh-facebook-token</code> endpoint to exchange short-lived tokens for long-lived Page tokens.</li>
+  <li><strong>Resend emails did not arrive</strong> — The <code>FROM_EMAIL</code> domain had not been verified. After verifying <code>chadsia.com</code> in Resend, it worked.</li>
+  <li><strong>AI-generated images looked messy</strong> — I added Unsplash as the primary image source and kept AI as a fallback.</li>
+</ul>
+
+<h2>Limitations, pain points, and free-tier constraints</h2>
+
+<h3>Built only with free services</h3>
+
+<p>
+  Every service used in this project is on a free tier. The text model is the free <code>allam-2-7b</code> from Groq. Images come from Unsplash and Pollinations first, with Cloudflare Workers AI as a last resort. Email uses Resend's free tier. The runtime is Cloudflare Workers' free tier.
+</p>
+
+<p>
+  Because of that, there are hard limits. The <code>allam-2-7b</code> model has a 6000 token-per-minute limit and sometimes produces short or dated output. It cannot browse the live web, so the "current" content in posts is based on its training data, not live research. The free Resend plan requires domain verification before sending to third-party addresses. Unsplash is limited to 50 requests per hour.
+</p>
+
+<h3>Built with Devin SWE-1.7 (free LLM)</h3>
+
+<p>
+  This entire project was built from start to finish using the free Devin SWE-1.7 coding model. There was no paid IDE, no premium agent, and no commercial coding assistant. Every file, endpoint, and integration was generated and debugged through the free plan.
+</p>
+
+<p>
+  That also meant slower iteration, more back-and-forth, and careful rate management. The model could not pull live data, so we had to rely on RSS feeds and static topic lists instead of real-time research.
+</p>
+
+<h3>Pain points we hit</h3>
+
+<ul>
+  <li><strong>Short AI outputs</strong> — <code>allam-2-7b</code> did not always reach 1000 words. I added a second expansion call, but the free model still has a ceiling.</li>
+  <li><strong>Outdated AI knowledge</strong> — The model cannot know what happened this week. RSS feeds fix some of this, but not for topics with no news.</li>
+  <li><strong>Image quality</strong> — Free AI image generators often produce abstract or messy images. Unsplash helped, but stock photos do not always match the exact topic.</li>
+  <li><strong>Token expiry</strong> — Facebook and Instagram tokens from Graph API Explorer expire in about an hour. I had to build a custom token exchange endpoint to get long-lived tokens.</li>
+  <li><strong>Permission confusion</strong> — The Facebook Page did not appear in <code>me/accounts</code> until <code>business_management</code> was added to the token permissions.</li>
+  <li><strong>Resend domain verification</strong> — Emails did not send until <code>chadsia.com</code> was verified with full DNS records.</li>
+  <li><strong>Instagram publishing delays</strong> — The media container is not immediately publishable. I had to add a 10-second wait before calling <code>media_publish</code>.</li>
+  <li><strong>Rate limits</strong> — Two AI calls per post for text plus image generation plus social posts meant we had to keep token budgets tight and wait between tests.</li>
+</ul>
+
+<h2>Final notes</h2>
+
+<p>
+  The system is now live, scheduled, and fully automated. It generates long-form content, publishes to the blog, and distributes social posts daily using only free tiers of Groq, Cloudflare, Resend, Unsplash, and Pollinations. The entire build was done with the free Devin SWE-1.7 coding model.
+</p>
+
+<p>
+  It is not perfect. The AI can be short, the images are sometimes generic, and the social platforms have tight token and permission rules. But for a fully free, automated content distribution pipeline, it is stable and working.
+</p>
+
+<p>
+  The repo is private at <a href="https://github.com/chadfuse/command-center">github.com/chadfuse/command-center</a>, and the README includes full setup instructions.
+</p>
+
+</body>
+</html>
