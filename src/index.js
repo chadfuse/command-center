@@ -426,6 +426,11 @@ async function uploadImageToLinkedIn(token, imageUrl, author) {
   return asset;
 }
 
+function formatHashtags(tags) {
+  if (!tags || tags.length === 0) return '';
+  return tags.map(t => '#' + t.trim().replace(/[\s-]+/g, '').toLowerCase()).join(' ');
+}
+
 async function postToLinkedIn({ text, env, media }) {
   const token = env.LINKEDIN_ACCESS_TOKEN;
   if (!token) {
@@ -433,7 +438,8 @@ async function postToLinkedIn({ text, env, media }) {
   }
 
   const author = await getLinkedInAuthor(token, env);
-  const shareText = `📝 ${text.title}\n\n${text.socialPost}`;
+  const hashtags = formatHashtags(text.tags);
+  const shareText = `📝 ${text.title}\n\n${text.socialPost}${hashtags ? '\n\n' + hashtags : ''}`;
 
   const shareContent = {
     shareCommentary: { text: shareText },
@@ -486,7 +492,8 @@ async function postToInstagram({ text, media, env }) {
     throw new Error('Instagram requires a featured image. WordPress must succeed first.');
   }
 
-  const caption = `✅ ${text.title}\n\n${text.socialPost}\n\n💡 Save this and share your thoughts below.`;
+  const hashtags = formatHashtags(text.tags);
+  const caption = `✅ ${text.title}\n\n${text.socialPost}\n\n💡 Save this and share your thoughts below.${hashtags ? '\n\n' + hashtags : ''}`;
   const createRes = await fetch(`https://graph.facebook.com/v19.0/${accountId}/media?image_url=${encodeURIComponent(media.source_url)}&caption=${encodeURIComponent(caption)}&access_token=${token}`, { method: 'POST' });
   if (!createRes.ok) {
     const err = await createRes.text();
@@ -577,7 +584,8 @@ async function postToFacebook({ text, env, mediaUrl }) {
   }
 
   const pageToken = await getFacebookPageToken(pageId, userToken);
-  const message = `📝 ${text.title}\n\n${text.socialPost}`;
+  const hashtags = formatHashtags(text.tags);
+  const message = `📝 ${text.title}\n\n${text.socialPost}${hashtags ? '\n\n' + hashtags : ''}`;
   const params = new URLSearchParams({ message, access_token: pageToken });
 
   if (mediaUrl) {
