@@ -100,6 +100,7 @@ SLUG: <url-friendly slug>
 FOCUS_KEYWORD: <primary SEO keyword>
 META_DESCRIPTION: <150-160 character meta description>
 EXCERPT: <1-2 sentence summary>
+SOCIAL_POST: <a short, original 120-200 word social media caption for LinkedIn, Facebook, and Instagram. It must be different from the excerpt. Do not include URLs, hashtags, or emojis. End with a question or a conversational call to action.>
 TAGS: <comma-separated list of 5-7 tags>
 BODY: <comprehensive, human, original HTML content of at least 1000 words. Do not write fewer than 1000 words. Use one <h1>, multiple <h2> and <h3> subheadings, short paragraphs, bullet lists, and practical examples. Mention current tools, recent best practices, and real-world examples where relevant. Avoid generic AI phrases and markdown code blocks.>
 
@@ -109,7 +110,7 @@ Do not add explanations, notes, or sections outside this format.`;
   const raw = await callTextApi([
     { role: 'system', content: system },
     { role: 'user', content: user },
-  ], 2000, env);
+  ], 2500, env);
 
   const fields = {
     title: /^TITLE:\s*(.+?)$/im,
@@ -117,6 +118,7 @@ Do not add explanations, notes, or sections outside this format.`;
     focusKeyword: /^FOCUS_KEYWORD:\s*(.+?)$/im,
     metaDescription: /^META_DESCRIPTION:\s*(.+?)$/im,
     excerpt: /^EXCERPT:\s*(.+?)$/im,
+    socialPost: /^SOCIAL_POST:\s*(.+?)$/im,
     tags: /^TAGS:\s*(.+?)$/im,
     body: /^BODY:\s*([\s\S]+?)(?:\n(?:TITLE|SLUG|FOCUS_KEYWORD|META_DESCRIPTION|EXCERPT|TAGS|BODY|NOTE|REFERENCE|CONCLUSION):\s*|$)/im,
   };
@@ -135,6 +137,7 @@ Do not add explanations, notes, or sections outside this format.`;
 
   parsed.title = parsed.title.replace(/^(TITLE|Title|title):\s*/i, '').replace(/<[^>]+>/g, '').trim();
   parsed.excerpt = parsed.excerpt.replace(/^(EXCERPT|Excerpt|excerpt):\s*/i, '').replace(/<[^>]+>/g, '').trim();
+  parsed.socialPost = parsed.socialPost.replace(/^(SOCIAL_POST|Social_Post|social_post):\s*/i, '').replace(/<[^>]+>/g, '').trim();
   parsed.metaDescription = parsed.metaDescription.replace(/<[^>]+>/g, '').trim();
   parsed.focusKeyword = parsed.focusKeyword.replace(/<[^>]+>/g, '').trim();
 
@@ -146,6 +149,10 @@ Do not add explanations, notes, or sections outside this format.`;
     parsed.body = await expandBody({ body: parsed.body, title: parsed.title, niche }, env);
   }
 
+  if (!parsed.socialPost || parsed.socialPost.length < 80) {
+    parsed.socialPost = await generateSocialPost({ title: parsed.title, excerpt: parsed.excerpt, body: parsed.body, niche }, env);
+  }
+
   const slug = parsed.slug || slugify(parsed.title) || slugify(topic);
   const tags = parsed.tags ? parsed.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
 
@@ -155,6 +162,7 @@ Do not add explanations, notes, or sections outside this format.`;
     focusKeyword: parsed.focusKeyword || topic,
     metaDescription: parsed.metaDescription || parsed.excerpt || parsed.body.slice(0, 160),
     excerpt: parsed.excerpt || parsed.metaDescription || parsed.body.slice(0, 200),
+    socialPost: parsed.socialPost || parsed.excerpt || parsed.body.slice(0, 300),
     tags,
     body: parsed.body,
   };
@@ -164,13 +172,25 @@ function countWords(html) {
   return stripHtml(html).split(/\s+/).filter(Boolean).length;
 }
 
+async function generateSocialPost({ title, excerpt, body, niche }, env) {
+  const summary = excerpt || stripHtml(body).slice(0, 400);
+  const prompt = `You are an expert ${niche} social media copywriter. Write a short, original, engaging 120-200 word social media caption for this post.\n\nTitle: ${title}\nSummary: ${summary}\n\nRequirements:\n- Do not copy the summary word for word.\n- Do not include URLs, hashtags, or emojis.\n- Write a complete paragraph or two.\n- End with a question or a conversational call to action.`;
+
+  const raw = await callTextApi([
+    { role: 'system', content: 'You write short, clear social media captions only. No URLs, no emojis, no hashtags.' },
+    { role: 'user', content: prompt },
+  ], 1000, env);
+
+  return raw.replace(/<[^>]+>/g, '').trim();
+}
+
 async function expandBody({ body, title, niche }, env) {
   const prompt = `You are an expert, human ${niche} content writer. Expand the following blog post to at least 1000 words total. Keep the existing HTML structure and content, but add more detail, examples, and practical subsections. Do not change the title. Return the complete expanded HTML body only. Do not wrap it in markdown code blocks.\n\nTitle: ${title}\n\n${body}`;
 
   let raw = await callTextApi([
     { role: 'system', content: 'You are a helpful content expansion assistant. Return HTML body only.' },
     { role: 'user', content: prompt },
-  ], 1500, env);
+  ], 2000, env);
   raw = raw.replace(/^```html\n?/, '').replace(/```\s*$/, '').trim();
   if (!raw.startsWith('<')) {
     raw = `<p>${raw.replace(/\n\n/g, '</p><p>')}</p>`;
@@ -406,15 +426,14 @@ async function uploadImageToLinkedIn(token, imageUrl, author) {
   return asset;
 }
 
-async function postToLinkedIn({ text, env, link, media }) {
+async function postToLinkedIn({ text, env, media }) {
   const token = env.LINKEDIN_ACCESS_TOKEN;
   if (!token) {
     throw new Error('LINKEDIN_ACCESS_TOKEN not set. Add it with wrangler secret put.');
   }
 
   const author = await getLinkedInAuthor(token, env);
-  const bodyText = stripHtml(text.body).slice(0, 1200);
-  const shareText = `📝 ${text.title}\n\n${bodyText}\n\n${link ? '👉 Read more: ' + link : ''}`;
+  const shareText = `📝 ${text.title}\n\n${text.socialPost}`;
 
   const shareContent = {
     shareCommentary: { text: shareText },
@@ -467,7 +486,7 @@ async function postToInstagram({ text, media, env }) {
     throw new Error('Instagram requires a featured image. WordPress must succeed first.');
   }
 
-  const caption = `✅ ${text.title}\n\n${text.excerpt || stripHtml(text.body).slice(0, 1200)}\n\n💡 Save this and share your thoughts below.`;
+  const caption = `✅ ${text.title}\n\n${text.socialPost}\n\n💡 Save this and share your thoughts below.`;
   const createRes = await fetch(`https://graph.facebook.com/v19.0/${accountId}/media?image_url=${encodeURIComponent(media.source_url)}&caption=${encodeURIComponent(caption)}&access_token=${token}`, { method: 'POST' });
   if (!createRes.ok) {
     const err = await createRes.text();
@@ -550,7 +569,7 @@ async function getFacebookPageToken(pageId, token) {
   throw new Error(`Could not get a valid token for Facebook Page ID ${pageId}. The token may not have pages_show_list/pages_manage_metadata, or the Page ID may be wrong.`);
 }
 
-async function postToFacebook({ text, env, link, mediaUrl }) {
+async function postToFacebook({ text, env, mediaUrl }) {
   const userToken = env.FACEBOOK_ACCESS_TOKEN;
   const pageId = env.FACEBOOK_PAGE_ID;
   if (!userToken || !pageId) {
@@ -558,14 +577,16 @@ async function postToFacebook({ text, env, link, mediaUrl }) {
   }
 
   const pageToken = await getFacebookPageToken(pageId, userToken);
-  const shareLink = link || mediaUrl;
-  const hook = text.excerpt ? `${text.excerpt}\n\n` : '';
-  const cta = '💬 Share your thoughts or questions below.';
-  const message = `📝 ${text.title}\n\n${hook}${cta}${shareLink ? '\n\n👉 ' + shareLink : ''}`;
+  const message = `📝 ${text.title}\n\n${text.socialPost}`;
   const params = new URLSearchParams({ message, access_token: pageToken });
-  if (shareLink) params.append('link', shareLink);
 
-  const res = await fetch(`https://graph.facebook.com/v19.0/${pageId}/feed?${params.toString()}`, { method: 'POST' });
+  if (mediaUrl) {
+    params.append('url', mediaUrl);
+    params.append('published', 'true');
+  }
+
+  const endpoint = mediaUrl ? `photos` : `feed`;
+  const res = await fetch(`https://graph.facebook.com/v19.0/${pageId}/${endpoint}?${params.toString()}`, { method: 'POST' });
   if (!res.ok) {
     const err = await res.text();
     throw new Error(`Facebook post failed: ${res.status} ${err}`);
@@ -747,10 +768,8 @@ async function runPost(body, env) {
     results.media = media ? { id: media.id, source_url: media.source_url } : null;
   }
 
-  const shareLink = results.wordpress?.link || wpBaseUrl(wp) || media?.source_url;
-
   if (platforms.includes('linkedin')) {
-    results.linkedin = await postToLinkedIn({ text, env, link: shareLink, media });
+    results.linkedin = await postToLinkedIn({ text, env, media });
   }
 
   if (platforms.includes('instagram')) {
@@ -762,7 +781,7 @@ async function runPost(body, env) {
   }
 
   if (platforms.includes('facebook')) {
-    results.facebook = await postToFacebook({ text, env, link: shareLink, mediaUrl: media?.source_url });
+    results.facebook = await postToFacebook({ text, env, mediaUrl: media?.source_url });
   }
 
   return {
@@ -770,6 +789,7 @@ async function runPost(body, env) {
     results,
     title: text.title,
     excerpt: text.excerpt || text.body.slice(0, 200),
+    socialPost: text.socialPost,
   };
 }
 
