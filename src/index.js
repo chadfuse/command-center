@@ -250,20 +250,20 @@ async function fetchOpenAIImage(topic, openaiKey) {
 }
 
 async function generateImage({ topic, niche }, env) {
-  if (env.UNSPLASH_ACCESS_KEY) {
-    try {
-      return await fetchUnsplashImage(topic, env.UNSPLASH_ACCESS_KEY);
-    } catch (e) {
-      console.log('Unsplash failed, trying OpenAI:', e.message);
-    }
-  }
-
   const openaiKey = env.OPENAI_API_KEY || env.TEXT_API_KEY;
   if (openaiKey) {
     try {
       return await fetchOpenAIImage(topic, openaiKey);
     } catch (e) {
-      console.log('OpenAI image failed, trying Pollinations:', e.message);
+      console.log('OpenAI image failed, trying Unsplash:', e.message);
+    }
+  }
+
+  if (env.UNSPLASH_ACCESS_KEY) {
+    try {
+      return await fetchUnsplashImage(topic, env.UNSPLASH_ACCESS_KEY);
+    } catch (e) {
+      console.log('Unsplash failed, trying Pollinations:', e.message);
     }
   }
 
