@@ -840,9 +840,144 @@ function buildEmailHtml(title, status, detail) {
   return `<h2>${status}: ${title}</h2><pre style="white-space:pre-wrap">${detail}</pre>`;
 }
 
+function dashboardHtml(env) {
+  const schedules = [
+    { time: '0 8 * * 1,4', action: 'WordPress long-form post' },
+    { time: '0 10 * * *', action: 'Social post (LinkedIn, Facebook, Instagram)' },
+    { time: '0 18 * * *', action: 'Social post (LinkedIn, Facebook, Instagram)' },
+  ];
+
+  const schedulesHtml = schedules.map(s => `<li><code>${s.time}</code> — ${s.action}</li>`).join('');
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Auto-poster Dashboard</title>
+  <style>
+    :root { --bg: #0f172a; --card: #1e293b; --text: #e2e8f0; --muted: #94a3b8; --accent: #38bdf8; --danger: #f87171; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+    .container { max-width: 760px; margin: 0 auto; padding: 2rem; }
+    h1 { font-size: 1.75rem; margin: 0 0 0.25rem; }
+    .subtitle { color: var(--muted); margin-bottom: 1.5rem; }
+    .grid { display: grid; gap: 1.25rem; }
+    .card { background: var(--card); border-radius: 0.75rem; padding: 1.25rem; }
+    .card h2 { font-size: 1.1rem; margin: 0 0 0.75rem; color: var(--accent); }
+    label { display: block; margin: 0.75rem 0 0.25rem; font-size: 0.9rem; color: var(--muted); }
+    input, select, textarea { width: 100%; padding: 0.6rem 0.75rem; border: 1px solid #334155; border-radius: 0.5rem; background: #0f172a; color: var(--text); font-size: 0.95rem; }
+    textarea { min-height: 100px; resize: vertical; }
+    .checkboxes { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 0.5rem; }
+    .checkboxes label { display: inline-flex; align-items: center; gap: 0.4rem; margin: 0; color: var(--text); }
+    button { background: var(--accent); color: #0f172a; border: 0; padding: 0.65rem 1.25rem; border-radius: 0.5rem; font-weight: 600; cursor: pointer; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    pre { background: #0f172a; border: 1px solid #334155; border-radius: 0.5rem; padding: 1rem; overflow: auto; font-size: 0.85rem; color: var(--text); }
+    .error { color: var(--danger); }
+    .success { color: #34d399; }
+    ul { margin: 0; padding-left: 1.25rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Auto-poster</h1>
+    <p class="subtitle">WordPress + LinkedIn + Facebook + Instagram automation</p>
+
+    <div class="grid">
+      <div class="card">
+        <h2>Current config</h2>
+        <ul>
+          <li>Text provider: <strong>${env.TEXT_API_URL?.includes('openrouter.ai') ? 'OpenRouter Qwen' : (env.TEXT_API_URL?.includes('googleapis.com') ? 'Google Gemini' : 'Custom')}</strong></li>
+          <li>Primary model: <code>${env.TEXT_MODEL || '—'}</code></li>
+          <li>Image source: <strong>Unsplash &rarr; Cloudflare Workers AI</strong></li>
+          <li>Notification email: ${env.NOTIFICATION_EMAIL || '—'}</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h2>Scheduled posting</h2>
+        <ul>${schedulesHtml}</ul>
+      </div>
+
+      <div class="card">
+        <h2>Manual post</h2>
+        <form id="postForm">
+          <label for="topic">Topic</label>
+          <input type="text" id="topic" name="topic" required placeholder="e.g. How AI speeds up WordPress workflows">
+
+          <label for="niche">Niche</label>
+          <input type="text" id="niche" name="niche" value="AI and WordPress development">
+
+          <label>Platforms</label>
+          <div class="checkboxes">
+            <label><input type="checkbox" name="platforms" value="wordpress" checked> WordPress</label>
+            <label><input type="checkbox" name="platforms" value="linkedin" checked> LinkedIn</label>
+            <label><input type="checkbox" name="platforms" value="facebook" checked> Facebook</label>
+            <label><input type="checkbox" name="platforms" value="instagram" checked> Instagram</label>
+          </div>
+
+          <label for="wpStatus">WordPress status</label>
+          <select id="wpStatus" name="wpStatus">
+            <option value="draft" selected>Draft</option>
+            <option value="publish">Publish</option>
+          </select>
+
+          <p style="margin-top:1rem"><button type="submit" id="submitBtn">Run now</button></p>
+        </form>
+        <div id="result"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    document.getElementById('postForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById('submitBtn');
+      const result = document.getElementById('result');
+      btn.disabled = true;
+      btn.textContent = 'Running...';
+      result.innerHTML = '';
+
+      const form = e.target;
+      const platforms = Array.from(form.querySelectorAll('input[name="platforms"]:checked')).map(cb => cb.value);
+      const body = {
+        topic: form.topic.value,
+        niche: form.niche.value,
+        platforms,
+        wp: { status: form.wpStatus.value }
+      };
+
+      try {
+        const res = await fetch('/', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        const statusClass = res.ok ? 'success' : 'error';
+        const statusText = res.ok ? 'Success' : 'Error';
+        result.innerHTML = '<p class="' + statusClass + '">' + statusText + ' (' + res.status + ')</p><pre>' + JSON.stringify(data, null, 2) + '</pre>';
+      } catch (err) {
+        result.innerHTML = '<p class="error">Network error: ' + err.message + '</p>';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Run now';
+      }
+    });
+  </script>
+</body>
+</html>`;
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+
+    if (url.pathname === '/' || url.pathname === '/dashboard') {
+      return new Response(dashboardHtml(env), {
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+      });
+    }
 
     if (url.pathname === '/refresh-facebook-token') {
       if (request.method !== 'POST') {
