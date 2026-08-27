@@ -211,6 +211,39 @@ async function fetchUnsplashImage(topic, accessKey) {
   throw new Error('Could not fetch any Unsplash image');
 }
 
+async function fetchTogetherImage(topic, togetherKey) {
+  const imagePrompt = `Modern, clean, professional featured blog image for "${topic}". Editorial minimal style, no text, no watermarks, high quality, 1024x576 landscape.`;
+  const res = await fetch('https://api.together.xyz/v1/images/generations', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'authorization': `Bearer ${togetherKey}`,
+    },
+    body: JSON.stringify({
+      model: 'black-forest-labs/FLUX.1-schnell',
+      prompt: imagePrompt,
+      width: 1024,
+      height: 576,
+      steps: 4,
+      n: 1,
+      response_format: 'b64_json',
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Together AI image generation failed: ${res.status} ${err}`);
+  }
+
+  const data = await res.json();
+  const b64 = data.data?.[0]?.b64_json;
+  if (!b64) throw new Error('Together AI did not return an image');
+
+  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  const blob = new Blob([bytes], { type: 'image/png' });
+  return { blob, ext: 'png', contentType: 'image/png' };
+}
+
 async function fetchOpenAIImage(topic, openaiKey) {
   const imagePrompt = `A modern, clean, professional featured blog image for "${topic}". Editorial minimal style, no text, no watermarks, high quality, 1200x675 landscape.`;
   const res = await fetch('https://api.openai.com/v1/images/generations', {
@@ -245,6 +278,14 @@ async function fetchOpenAIImage(topic, openaiKey) {
 }
 
 async function generateImage({ topic, niche }, env) {
+  if (env.TOGETHER_API_KEY) {
+    try {
+      return await fetchTogetherImage(topic, env.TOGETHER_API_KEY);
+    } catch (e) {
+      console.log('Together AI failed, trying Unsplash:', e.message);
+    }
+  }
+
   if (env.UNSPLASH_ACCESS_KEY) {
     try {
       return await fetchUnsplashImage(topic, env.UNSPLASH_ACCESS_KEY);
