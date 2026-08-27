@@ -83,6 +83,24 @@ async function callTextApi(messages, maxTokens, env) {
     }
   }
 
+  if (env.AI) {
+    const workersModels = [
+      '@cf/meta/llama-3.1-8b-instruct-fp8',
+      '@cf/meta/llama-3.1-8b-instruct',
+      '@cf/mistral/mistral-7b-instruct-v0.2',
+    ];
+    for (const model of workersModels) {
+      try {
+        const result = await env.AI.run(model, { messages });
+        const raw = result.response || '';
+        if (raw) return raw;
+      } catch (e) {
+        lastError = e;
+        console.log(`Workers AI ${model} failed:`, e.message);
+      }
+    }
+  }
+
   throw lastError || new Error('Text API failed for all configured models and fallback providers');
 }
 
@@ -211,117 +229,13 @@ async function fetchUnsplashImage(topic, accessKey) {
   throw new Error('Could not fetch any Unsplash image');
 }
 
-async function fetchTogetherImage(topic, togetherKey) {
-  const imagePrompt = `Modern, clean, professional featured blog image for "${topic}". Editorial minimal style, no text, no watermarks, high quality, 1024x576 landscape.`;
-  const res = await fetch('https://api.together.xyz/v1/images/generations', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'authorization': `Bearer ${togetherKey}`,
-    },
-    body: JSON.stringify({
-      model: 'black-forest-labs/FLUX.1-schnell',
-      prompt: imagePrompt,
-      width: 1024,
-      height: 576,
-      steps: 4,
-      n: 1,
-      response_format: 'b64_json',
-    }),
-  });
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Together AI image generation failed: ${res.status} ${err}`);
-  }
-
-  const data = await res.json();
-  const b64 = data.data?.[0]?.b64_json;
-  if (!b64) throw new Error('Together AI did not return an image');
-
-  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-  const blob = new Blob([bytes], { type: 'image/png' });
-  return { blob, ext: 'png', contentType: 'image/png' };
-}
-
-async function fetchOpenAIImage(topic, openaiKey) {
-  const imagePrompt = `A modern, clean, professional featured blog image for "${topic}". Editorial minimal style, no text, no watermarks, high quality, 1200x675 landscape.`;
-  const res = await fetch('https://api.openai.com/v1/images/generations', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'authorization': `Bearer ${openaiKey}`,
-    },
-    body: JSON.stringify({
-      model: 'dall-e-3',
-      prompt: imagePrompt,
-      n: 1,
-      size: '1024x1024',
-      response_format: 'url',
-    }),
-  });
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`OpenAI image generation failed: ${res.status} ${err}`);
-  }
-
-  const data = await res.json();
-  const imageUrl = data.data?.[0]?.url;
-  if (!imageUrl) throw new Error('OpenAI did not return an image URL');
-
-  const imgRes = await fetch(imageUrl);
-  if (!imgRes.ok) throw new Error(`Could not download OpenAI image: ${imgRes.status}`);
-
-  const blob = await imgRes.blob();
-  return { blob, ext: 'png', contentType: 'image/png' };
-}
-
 async function generateImage({ topic, niche }, env) {
-  if (env.TOGETHER_API_KEY) {
-    try {
-      return await fetchTogetherImage(topic, env.TOGETHER_API_KEY);
-    } catch (e) {
-      console.log('Together AI failed, trying Unsplash:', e.message);
-    }
-  }
-
   if (env.UNSPLASH_ACCESS_KEY) {
     try {
-      return await fetchUnsplashImage(topic, env.UNSPLASH_ACCESS_KEY);
+      const query = [topic, niche].filter(Boolean).join(' ').split(' ').slice(0, 8).join(' ');
+      return await fetchUnsplashImage(query, env.UNSPLASH_ACCESS_KEY);
     } catch (e) {
-      console.log('Unsplash failed, trying OpenAI:', e.message);
-    }
-  }
-
-  const openaiKey = env.OPENAI_API_KEY || env.TEXT_API_KEY;
-  if (openaiKey) {
-    try {
-      return await fetchOpenAIImage(topic, openaiKey);
-    } catch (e) {
-      console.log('OpenAI image failed, trying Pollinations:', e.message);
-    }
-  }
-
-  const prompts = [
-    `Modern professional featured image for a blog post about ${topic}, clean minimal editorial style, no text, high quality, 4k`,
-    `Abstract minimal editorial illustration for ${niche}, clean, professional, no text, high quality`,
-    `Clean abstract technology concept, modern minimal style, professional, no text, high quality`,
-  ];
-  const negative = 'text, watermark, logo, blurry, low quality, gibberish, ugly, distorted';
-  const width = 1200;
-  const height = 675;
-
-  for (const prompt of prompts) {
-    const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&seed=${Date.now()}&nologo=true&negative_prompt=${encodeURIComponent(negative)}`;
-    try {
-      const res = await fetch(url, { headers: { accept: 'image/*' } });
-      if (res.ok) {
-        const blob = await res.blob();
-        return { blob, ext: 'jpeg', contentType: 'image/jpeg' };
-      }
-    } catch (e) {
-      console.log('Pollinations failed, trying Cloudflare AI:', e.message);
+      console.log('Unsplash failed, trying Cloudflare AI:', e.message);
     }
   }
 
@@ -329,28 +243,25 @@ async function generateImage({ topic, niche }, env) {
     throw new Error('AI binding not configured. Add [ai] binding = "AI" to wrangler.toml.');
   }
 
-  let lastError = null;
-  for (const prompt of prompts) {
-    try {
-      const result = await env.AI.run('@cf/black-forest-labs/flux-1-schnell', { prompt });
-      const b64 = result.image;
-      if (typeof b64 === 'string' && b64) {
-        const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-        const blob = new Blob([bytes], { type: 'image/jpeg' });
-        return { blob, ext: 'jpeg', contentType: 'image/jpeg' };
-      }
-      lastError = new Error('Cloudflare AI did not return an image');
-    } catch (e) {
-      lastError = e;
-      if (e.message?.includes('8007') || e.message?.includes('NSFW')) {
-        continue;
-      }
-      throw e;
+  const prompt = `A clean, professional, safe-for-work featured blog image about "${topic}". ${niche} theme, modern editorial style, no text, no watermarks, no logos, no nudity, no violence, high quality.`;
+  try {
+    const result = await env.AI.run('@cf/black-forest-labs/flux-1-schnell', { prompt });
+    const b64 = result.image;
+    if (typeof b64 === 'string' && b64) {
+      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+      const blob = new Blob([bytes], { type: 'image/jpeg' });
+      return { blob, ext: 'jpeg', contentType: 'image/jpeg' };
     }
+  } catch (e) {
+    if (e.message?.includes('8007') || e.message?.includes('NSFW')) {
+      throw new Error('Cloudflare AI rejected the image as unsafe');
+    }
+    console.log('Cloudflare AI failed:', e.message);
   }
 
-  throw lastError || new Error('Image generation failed');
+  throw new Error('Image generation failed');
 }
+
 
 function wpBaseUrl(wp) {
   return wp.url.replace(/\/$/, '');
