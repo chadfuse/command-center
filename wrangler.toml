@@ -3,9 +3,9 @@ main = "src/index.js"
 compatibility_date = "2024-08-15"
 
 [vars]
-TEXT_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-TEXT_MODEL = "allam-2-7b"
-FALLBACK_TEXT_MODEL = "qwen/qwen3.6-27b"
+TEXT_API_URL = "https://api.openai.com/v1/chat/completions"
+TEXT_MODEL = "gpt-4o-mini"
+FALLBACK_TEXT_MODEL = "gpt-4o"
 CRON_NICHE = "AI and WordPress development"
 CRON_TOPICS = "[\"How to use AI to speed up WordPress development\", \"Beaver Builder AI tips and workflows\", \"Top AI tools for WordPress developers\", \"How to improve Core Web Vitals\", \"Building custom AI features inside WordPress\", \"Best AI plugins for Beaver Builder\", \"WordPress security best practices\", \"Automating WordPress content with AI\", \"How to use AI for WordPress code generation\", \"AI-powered design systems for WordPress\", \"Modern web development frameworks\", \"Beaver Builder and AI: a complete guide\", \"AI automation for web developers\", \"Conversion-focused landing page design\", \"WordPress and AI chatbots: how to build one\"]"
 RSS_FEED_URLS = "[\"https://wptavern.com/feed\", \"https://wordpress.org/news/feed/\", \"https://torquemag.io/feed/\", \"https://beaverbuilder.com/feed/\"]"

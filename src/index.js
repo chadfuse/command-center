@@ -216,12 +216,54 @@ async function fetchUnsplashImage(topic, accessKey) {
   throw new Error('Could not fetch any Unsplash image');
 }
 
+async function fetchOpenAIImage(topic, openaiKey) {
+  const imagePrompt = `A modern, clean, professional featured blog image for "${topic}". Editorial minimal style, no text, no watermarks, high quality, 1200x675 landscape.`;
+  const res = await fetch('https://api.openai.com/v1/images/generations', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'authorization': `Bearer ${openaiKey}`,
+    },
+    body: JSON.stringify({
+      model: 'dall-e-3',
+      prompt: imagePrompt,
+      n: 1,
+      size: '1024x1024',
+      response_format: 'url',
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`OpenAI image generation failed: ${res.status} ${err}`);
+  }
+
+  const data = await res.json();
+  const imageUrl = data.data?.[0]?.url;
+  if (!imageUrl) throw new Error('OpenAI did not return an image URL');
+
+  const imgRes = await fetch(imageUrl);
+  if (!imgRes.ok) throw new Error(`Could not download OpenAI image: ${imgRes.status}`);
+
+  const blob = await imgRes.blob();
+  return { blob, ext: 'png', contentType: 'image/png' };
+}
+
 async function generateImage({ topic, niche }, env) {
   if (env.UNSPLASH_ACCESS_KEY) {
     try {
       return await fetchUnsplashImage(topic, env.UNSPLASH_ACCESS_KEY);
     } catch (e) {
-      console.log('Unsplash failed, trying AI:', e.message);
+      console.log('Unsplash failed, trying OpenAI:', e.message);
+    }
+  }
+
+  const openaiKey = env.OPENAI_API_KEY || env.TEXT_API_KEY;
+  if (openaiKey) {
+    try {
+      return await fetchOpenAIImage(topic, openaiKey);
+    } catch (e) {
+      console.log('OpenAI image failed, trying Pollinations:', e.message);
     }
   }
 
