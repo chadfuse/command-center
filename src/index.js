@@ -21,9 +21,27 @@ function slugify(text) {
     .replace(/-$/, '');
 }
 
+function isRefusal(text) {
+  const lower = text.toLowerCase().trim();
+  return lower.startsWith("i can't fulfill") ||
+         lower.startsWith("i cannot fulfill") ||
+         lower.startsWith("i can’t fulfill") ||
+         lower.includes("i can't fulfill that") ||
+         lower.includes("i cannot fulfill that") ||
+         lower.includes("i can’t fulfill that");
+}
+
 async function callTextApi(messages, maxTokens, env) {
   const isGoogle = env.TEXT_API_URL?.includes('googleapis.com');
-  const apiKey = isGoogle ? (env.GOOGLE_API_KEY || env.TEXT_API_KEY) : env.TEXT_API_KEY;
+  const isOpenRouter = env.TEXT_API_URL?.includes('openrouter.ai');
+  let apiKey;
+  if (isGoogle) {
+    apiKey = env.GOOGLE_API_KEY || env.TEXT_API_KEY;
+  } else if (isOpenRouter) {
+    apiKey = env.OPENROUTER_API_KEY || env.TEXT_API_KEY;
+  } else {
+    apiKey = env.TEXT_API_KEY;
+  }
   const models = [env.TEXT_MODEL, env.FALLBACK_TEXT_MODEL].filter(Boolean);
 
   if (!env.TEXT_API_URL || !apiKey) {
@@ -50,8 +68,8 @@ async function callTextApi(messages, maxTokens, env) {
       if (res.ok) {
         const data = await res.json();
         const raw = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-        if (raw) return raw;
-        lastError = new Error('Google AI returned empty content');
+        if (raw && !isRefusal(raw)) return raw;
+        lastError = raw ? new Error('Google AI returned a refusal') : new Error('Google AI returned empty content');
       } else {
         const err = await res.text();
         lastError = new Error(`Google AI error ${res.status}: ${err}`);
@@ -74,8 +92,8 @@ async function callTextApi(messages, maxTokens, env) {
       if (res.ok) {
         const data = await res.json();
         const raw = data.choices?.[0]?.message?.content ?? '';
-        if (raw) return raw;
-        lastError = new Error('Text API returned empty content');
+        if (raw && !isRefusal(raw)) return raw;
+        lastError = raw ? new Error(`Text API ${model} returned a refusal`) : new Error('Text API returned empty content');
       } else {
         const err = await res.text();
         lastError = new Error(`Text API error ${res.status}: ${err}`);
@@ -93,7 +111,7 @@ async function callTextApi(messages, maxTokens, env) {
       try {
         const result = await env.AI.run(model, { messages });
         const raw = result.response || '';
-        if (raw) return raw;
+        if (raw && !isRefusal(raw)) return raw;
       } catch (e) {
         lastError = e;
         console.log(`Workers AI ${model} failed:`, e.message);
