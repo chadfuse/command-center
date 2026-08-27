@@ -22,52 +22,46 @@ function slugify(text) {
 }
 
 async function callTextApi(messages, maxTokens, env) {
-  const apiUrl = env.TEXT_API_URL;
-  const apiKey = env.TEXT_API_KEY;
+  const isGoogle = env.TEXT_API_URL?.includes('googleapis.com');
+  const apiKey = isGoogle ? (env.GOOGLE_API_KEY || env.TEXT_API_KEY) : env.TEXT_API_KEY;
   const models = [env.TEXT_MODEL, env.FALLBACK_TEXT_MODEL].filter(Boolean);
 
-  if (!apiUrl || !apiKey) {
-    throw new Error('TEXT_API_URL and TEXT_API_KEY must be set in your Worker secrets/env. See .dev.vars.example.');
+  if (!env.TEXT_API_URL || !apiKey) {
+    throw new Error('TEXT_API_URL and an API key must be set. See .dev.vars.example.');
   }
 
   let lastError = null;
   for (const model of models) {
-    const res = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages,
-        temperature: 0.7,
-        max_tokens: maxTokens,
-      }),
-    });
+    let res;
+    if (isGoogle) {
+      const url = `${env.TEXT_API_URL.replace(/\/?$/, '')}/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+      const systemText = messages.find(m => m.role === 'system')?.content || '';
+      const userText = messages.filter(m => m.role === 'user').map(m => m.content).join('\n\n');
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: systemText }] },
+          contents: [{ role: 'user', parts: [{ text: userText }] }],
+          generationConfig: { temperature: 0.7, maxOutputTokens: maxTokens },
+        }),
+      });
 
-    if (res.ok) {
-      const data = await res.json();
-      const raw = data.choices?.[0]?.message?.content ?? '';
-      if (raw) return raw;
-      lastError = new Error('Text API returned empty content');
+      if (res.ok) {
+        const data = await res.json();
+        const raw = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+        if (raw) return raw;
+        lastError = new Error('Google AI returned empty content');
+      } else {
+        const err = await res.text();
+        lastError = new Error(`Google AI error ${res.status}: ${err}`);
+      }
     } else {
-      const err = await res.text();
-      lastError = new Error(`Text API error ${res.status}: ${err}`);
-    }
-  }
-
-  if (env.FALLBACK_TEXT_API_URL && env.FALLBACK_TEXT_API_KEY) {
-    const fallbackModels = env.FALLBACK_TEXT_API_MODELS
-      ? JSON.parse(env.FALLBACK_TEXT_API_MODELS)
-      : (env.FALLBACK_TEXT_API_MODEL ? [env.FALLBACK_TEXT_API_MODEL] : []);
-
-    for (const model of fallbackModels) {
-      const res = await fetch(env.FALLBACK_TEXT_API_URL, {
+      res = await fetch(env.TEXT_API_URL, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          'authorization': `Bearer ${env.FALLBACK_TEXT_API_KEY}`,
+          'authorization': `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
           model,
@@ -81,9 +75,10 @@ async function callTextApi(messages, maxTokens, env) {
         const data = await res.json();
         const raw = data.choices?.[0]?.message?.content ?? '';
         if (raw) return raw;
+        lastError = new Error('Text API returned empty content');
       } else {
         const err = await res.text();
-        lastError = new Error(`Fallback text API error ${res.status}: ${err}`);
+        lastError = new Error(`Text API error ${res.status}: ${err}`);
       }
     }
   }
@@ -250,20 +245,20 @@ async function fetchOpenAIImage(topic, openaiKey) {
 }
 
 async function generateImage({ topic, niche }, env) {
+  if (env.UNSPLASH_ACCESS_KEY) {
+    try {
+      return await fetchUnsplashImage(topic, env.UNSPLASH_ACCESS_KEY);
+    } catch (e) {
+      console.log('Unsplash failed, trying OpenAI:', e.message);
+    }
+  }
+
   const openaiKey = env.OPENAI_API_KEY || env.TEXT_API_KEY;
   if (openaiKey) {
     try {
       return await fetchOpenAIImage(topic, openaiKey);
     } catch (e) {
-      console.log('OpenAI image failed, trying Unsplash:', e.message);
-    }
-  }
-
-  if (env.UNSPLASH_ACCESS_KEY) {
-    try {
-      return await fetchUnsplashImage(topic, env.UNSPLASH_ACCESS_KEY);
-    } catch (e) {
-      console.log('Unsplash failed, trying Pollinations:', e.message);
+      console.log('OpenAI image failed, trying Pollinations:', e.message);
     }
   }
 
