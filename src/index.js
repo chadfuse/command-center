@@ -229,29 +229,89 @@ async function expandBody({ body, title, niche }, env) {
   return raw || body;
 }
 
-async function fetchUnsplashImage(topic, accessKey) {
-  const query = encodeURIComponent(topic.split(' ').slice(0, 6).join(' '));
-  const searchRes = await fetch(`https://api.unsplash.com/search/photos?query=${query}&per_page=5&orientation=landscape&client_id=${accessKey}`);
-  if (!searchRes.ok) throw new Error(`Unsplash search failed: ${searchRes.status}`);
-  const data = await searchRes.json();
-  if (!data.results?.length) throw new Error('No Unsplash results found');
+function getUnsplashQueries(topic, niche) {
+  const stopwords = new Set([
+    'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'has', 'he',
+    'in', 'is', 'it', 'its', 'of', 'on', 'that', 'the', 'to', 'was', 'were',
+    'will', 'with', 'how', 'why', 'what', 'when', 'which', 'your', 'my', 'their',
+    'best', 'guide', 'mastering', 'unlocking', 'building', 'step', 'steps',
+    'testing', 'review', 'vs', 'versus', 'easy', 'simple', 'fast', 'complete',
+    'ultimate', 'top', 'new', 'latest', 'using', 'way', 'ways', 'tips', 'tricks',
+    'tutorial', 'introduction', 'deep', 'dive', 'hands', 'on'
+  ]);
 
-  for (const result of data.results) {
-    const imageUrl = `${result.urls.regular}&w=1200&h=675&fit=crop`;
-    const imgRes = await fetch(imageUrl);
-    if (imgRes.ok) {
-      const blob = await imgRes.blob();
-      return { blob, ext: 'jpeg', contentType: blob.type || 'image/jpeg' };
+  const cleanWords = (topic || '')
+    .toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 2 && !stopwords.has(w));
+
+  const queries = [];
+
+  if (cleanWords.length >= 2) {
+    queries.push(cleanWords.slice(0, 3).join(' '));
+  }
+  if (cleanWords.length >= 1) {
+    queries.push(`${cleanWords[0]} technology`);
+    queries.push(`${cleanWords[0]} workspace`);
+  }
+
+  const nicheLower = (niche || '').toLowerCase();
+  if (nicheLower.includes('wordpress') || nicheLower.includes('web') || nicheLower.includes('code')) {
+    queries.push('web development coding', 'minimalist workspace laptop', 'software programming screen', 'clean desk computer');
+  } else if (nicheLower.includes('ai') || nicheLower.includes('intelligence') || nicheLower.includes('data')) {
+    queries.push('artificial intelligence technology', 'modern server room data', 'digital futuristic abstract', 'minimalist technology');
+  } else {
+    queries.push('modern technology workspace', 'clean minimal office desk', 'digital technology abstract');
+  }
+
+  queries.push('minimalist workspace desk', 'modern tech office setup', 'abstract digital technology');
+  return Array.from(new Set(queries.filter(Boolean)));
+}
+
+async function fetchUnsplashImage(queries, accessKey) {
+  const queryList = Array.isArray(queries) ? queries : [queries];
+  for (const q of queryList) {
+    const encoded = encodeURIComponent(q);
+    try {
+      const searchRes = await fetch(`https://api.unsplash.com/search/photos?query=${encoded}&per_page=5&orientation=landscape&client_id=${accessKey}`);
+      if (!searchRes.ok) continue;
+      const data = await searchRes.json();
+      if (!data.results?.length) continue;
+
+      for (const result of data.results) {
+        const imageUrl = `${result.urls.regular}&w=1200&h=675&fit=crop`;
+        const imgRes = await fetch(imageUrl);
+        if (imgRes.ok) {
+          const blob = await imgRes.blob();
+          return { blob, ext: 'jpeg', contentType: blob.type || 'image/jpeg' };
+        }
+      }
+    } catch (e) {
+      console.log(`Unsplash query "${q}" failed:`, e.message);
     }
   }
-  throw new Error('Could not fetch any Unsplash image');
+  throw new Error('Could not fetch any Unsplash image from candidate queries');
+}
+
+function buildAIVisualPrompt(topic, niche) {
+  const nicheLower = (niche || '').toLowerCase();
+  let subject = 'sleek minimalist 3D geometric glass forms and subtle glowing fiber optic lines in dark studio';
+
+  if (nicheLower.includes('wordpress') || nicheLower.includes('web') || nicheLower.includes('code')) {
+    subject = 'aesthetic modern designer workspace, clean wooden desk, glowing ambient soft monitor light, architectural minimalism, 35mm photography, shallow depth of field';
+  } else if (nicheLower.includes('ai') || nicheLower.includes('intelligence') || nicheLower.includes('data')) {
+    subject = 'futuristic translucent glass spheres floating in dark architectural space with soft cinematic neon rim lighting, octane 3d render';
+  }
+
+  return `Cinematic high-end commercial photograph of ${subject}, ultra-clean composition, Hasselblad medium format, award winning lighting, completely blank surfaces, pristine, photorealistic, no text, no words, no letters, no typography, no captions, no signs, no logos, no watermarks, no writing.`;
 }
 
 async function generateImage({ topic, niche }, env) {
   if (env.UNSPLASH_ACCESS_KEY) {
     try {
-      const query = [topic, niche].filter(Boolean).join(' ').split(' ').slice(0, 8).join(' ');
-      return await fetchUnsplashImage(query, env.UNSPLASH_ACCESS_KEY);
+      const queries = getUnsplashQueries(topic, niche);
+      return await fetchUnsplashImage(queries, env.UNSPLASH_ACCESS_KEY);
     } catch (e) {
       console.log('Unsplash failed, trying Cloudflare AI:', e.message);
     }
@@ -261,7 +321,7 @@ async function generateImage({ topic, niche }, env) {
     throw new Error('AI binding not configured. Add [ai] binding = "AI" to wrangler.toml.');
   }
 
-  const prompt = `A clean, professional, safe-for-work featured blog image about "${topic}". ${niche} theme, modern editorial style, no text, no watermarks, no logos, no nudity, no violence, high quality.`;
+  const prompt = buildAIVisualPrompt(topic, niche);
   try {
     const result = await env.AI.run('@cf/black-forest-labs/flux-1-schnell', { prompt });
     const b64 = result.image;
@@ -840,6 +900,66 @@ function buildEmailHtml(title, status, detail) {
   return `<h2>${status}: ${title}</h2><pre style="white-space:pre-wrap">${detail}</pre>`;
 }
 
+async function hashPassword(password) {
+  const buf = new TextEncoder().encode(password);
+  const hash = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function getCookie(request, name) {
+  const cookieHeader = request.headers.get('cookie') || '';
+  for (const pair of cookieHeader.split(';')) {
+    const [key, ...value] = pair.split('=');
+    if (key && key.trim() === name) {
+      return value.join('=').trim();
+    }
+  }
+  return null;
+}
+
+async function isAuthenticated(request, env) {
+  if (!env.DASHBOARD_PASSWORD) return true;
+  const expected = await hashPassword(env.DASHBOARD_PASSWORD);
+  const token = getCookie(request, 'dashboard-auth');
+  return token === expected;
+}
+
+function loginHtml(error = '') {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Auto-poster Login</title>
+  <style>
+    :root { --bg: #0f172a; --card: #1e293b; --text: #e2e8f0; --muted: #94a3b8; --accent: #38bdf8; --danger: #f87171; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+    .container { max-width: 360px; margin: 8rem auto; padding: 2rem; }
+    .card { background: var(--card); border-radius: 0.75rem; padding: 1.5rem; }
+    h1 { font-size: 1.25rem; margin: 0 0 1rem; }
+    label { display: block; margin: 1rem 0 0.25rem; font-size: 0.85rem; color: var(--muted); }
+    input { width: 100%; padding: 0.6rem; border: 1px solid #334155; border-radius: 0.5rem; background: #0f172a; color: var(--text); }
+    button { width: 100%; margin-top: 1rem; background: var(--accent); color: #0f172a; border: 0; padding: 0.65rem; border-radius: 0.5rem; font-weight: 600; cursor: pointer; }
+    .error { color: var(--danger); margin-top: 0.75rem; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <h1>Auto-poster Login</h1>
+      <form method="POST" action="/login">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" required autofocus>
+        <button type="submit">Sign in</button>
+        ${error ? `<p class="error">${error}</p>` : ''}
+      </form>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
 function dashboardHtml(env) {
   const schedules = [
     { time: '0 8 * * 1,4', action: 'WordPress long-form post' },
@@ -859,7 +979,9 @@ function dashboardHtml(env) {
     :root { --bg: #0f172a; --card: #1e293b; --text: #e2e8f0; --muted: #94a3b8; --accent: #38bdf8; --danger: #f87171; }
     * { box-sizing: border-box; }
     body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
-    .container { max-width: 760px; margin: 0 auto; padding: 2rem; }
+    .header { display: flex; justify-content: space-between; align-items: flex-start; max-width: 760px; margin: 0 auto; padding: 2rem 2rem 0; }
+    .logout { color: var(--accent); text-decoration: none; font-size: 0.9rem; }
+    .container { max-width: 760px; margin: 0 auto; padding: 1rem 2rem 2rem; }
     h1 { font-size: 1.75rem; margin: 0 0 0.25rem; }
     .subtitle { color: var(--muted); margin-bottom: 1.5rem; }
     .grid { display: grid; gap: 1.25rem; }
@@ -879,9 +1001,14 @@ function dashboardHtml(env) {
   </style>
 </head>
 <body>
+  <div class="header">
+    <div>
+      <h1>Auto-poster</h1>
+      <p class="subtitle">WordPress + LinkedIn + Facebook + Instagram automation</p>
+    </div>
+    <a class="logout" href="/logout">Logout</a>
+  </div>
   <div class="container">
-    <h1>Auto-poster</h1>
-    <p class="subtitle">WordPress + LinkedIn + Facebook + Instagram automation</p>
 
     <div class="grid">
       <div class="card">
@@ -973,7 +1100,36 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
+    if (url.pathname === '/login') {
+      if (request.method !== 'POST') {
+        return new Response(loginHtml(), { headers: { 'content-type': 'text/html; charset=utf-8' } });
+      }
+      const form = await request.formData();
+      const password = form.get('password') || '';
+      if (env.DASHBOARD_PASSWORD && password !== env.DASHBOARD_PASSWORD) {
+        return new Response(loginHtml('Invalid password'), { headers: { 'content-type': 'text/html; charset=utf-8' }, status: 401 });
+      }
+      const token = await hashPassword(env.DASHBOARD_PASSWORD || '');
+      const headers = new Headers({
+        'content-type': 'text/html; charset=utf-8',
+        'set-cookie': `dashboard-auth=${token}; Path=/; HttpOnly; Secure; SameSite=Strict`,
+      });
+      headers.append('location', '/');
+      return new Response('', { status: 302, headers });
+    }
+
+    if (url.pathname === '/logout') {
+      const headers = new Headers({
+        'set-cookie': 'dashboard-auth=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0',
+      });
+      headers.append('location', '/');
+      return new Response('', { status: 302, headers });
+    }
+
     if (url.pathname === '/' || url.pathname === '/dashboard') {
+      if (!(await isAuthenticated(request, env))) {
+        return new Response(loginHtml(), { headers: { 'content-type': 'text/html; charset=utf-8' } });
+      }
       return new Response(dashboardHtml(env), {
         headers: { 'content-type': 'text/html; charset=utf-8' },
       });
@@ -999,6 +1155,10 @@ export default {
 
     if (request.method !== 'POST') {
       return new Response('Send a POST request with JSON: { "topic": "...", "niche": "...", "platforms": ["wordpress", "linkedin", "instagram", "tiktok", "facebook"] }', { status: 200 });
+    }
+
+    if (!(await isAuthenticated(request, env))) {
+      return jsonResponse({ error: 'Authentication required' }, 401);
     }
 
     let body;
