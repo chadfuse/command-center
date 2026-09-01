@@ -32,71 +32,107 @@ function isRefusal(text) {
 }
 
 async function callTextApi(messages, maxTokens, env) {
-  const isGoogle = env.TEXT_API_URL?.includes('googleapis.com');
+  const isGoogle = env.TEXT_API_URL?.includes('googleapis.com') || (!env.TEXT_API_URL && (env.GOOGLE_API_KEY || env.GEMINI_API_KEY));
   const isOpenRouter = env.TEXT_API_URL?.includes('openrouter.ai');
   let apiKey;
   if (isGoogle) {
-    apiKey = env.GOOGLE_API_KEY || env.TEXT_API_KEY;
+    apiKey = env.GOOGLE_API_KEY || env.GEMINI_API_KEY || env.TEXT_API_KEY;
   } else if (isOpenRouter) {
     apiKey = env.OPENROUTER_API_KEY || env.TEXT_API_KEY;
   } else {
-    apiKey = env.TEXT_API_KEY;
+    apiKey = env.GOOGLE_API_KEY || env.GEMINI_API_KEY || env.TEXT_API_KEY;
   }
-  const models = [env.TEXT_MODEL, env.FALLBACK_TEXT_MODEL].filter(Boolean);
+  const models = [env.TEXT_MODEL, env.FALLBACK_TEXT_MODEL, 'gemini-2.5-flash', 'gemini-2.0-flash'].filter((m, i, arr) => m && arr.indexOf(m) === i);
 
-  if (!env.TEXT_API_URL || !apiKey) {
-    throw new Error('TEXT_API_URL and an API key must be set. See .dev.vars.example.');
+  const textApiUrl = env.TEXT_API_URL || (isGoogle ? 'https://generativelanguage.googleapis.com/v1beta/models' : '');
+  if (!textApiUrl || !apiKey) {
+    throw new Error('Text API URL and an API key must be set (e.g. GOOGLE_API_KEY or TEXT_API_KEY). See .dev.vars.example.');
   }
 
   let lastError = null;
   for (const model of models) {
     let res;
     if (isGoogle) {
-      const url = `${env.TEXT_API_URL.replace(/\/?$/, '')}/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
-      const systemText = messages.find(m => m.role === 'system')?.content || '';
-      const userText = messages.filter(m => m.role === 'user').map(m => m.content).join('\n\n');
-      res = await fetch(url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: systemText }] },
-          contents: [{ role: 'user', parts: [{ text: userText }] }],
-          generationConfig: { temperature: 0.7, maxOutputTokens: maxTokens },
-        }),
-      });
+      const base = textApiUrl.replace(/\/+$/, '');
+      const url = base.endsWith('/models')
+        ? `${base}/${model}:generateContent?key=${encodeURIComponent(apiKey)}`
+        : `${base}/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
-      if (res.ok) {
-        const data = await res.json();
-        const raw = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-        if (raw && !isRefusal(raw)) return raw;
-        lastError = raw ? new Error('Google AI returned a refusal') : new Error('Google AI returned empty content');
-      } else {
-        const err = await res.text();
-        lastError = new Error(`Google AI error ${res.status}: ${err}`);
+      const systemText = messages.find(m => m.role === 'system')?.content || '';
+      const conversationMessages = messages.filter(m => m.role !== 'system');
+      const contents = conversationMessages.map(m => ({
+        role: (m.role === 'assistant' || m.role === 'model') ? 'model' : 'user',
+        parts: [{ text: m.content || '' }],
+      }));
+
+      if (contents.length === 0) {
+        const userText = messages.filter(m => m.role === 'user').map(m => m.content).join('\n\n');
+        contents.push({ role: 'user', parts: [{ text: userText }] });
+      }
+
+      const body = {
+        contents,
+        generationConfig: {
+          temperature: 0.7,
+          maxOutputTokens: maxTokens,
+        },
+      };
+      if (systemText) {
+        body.systemInstruction = { parts: [{ text: systemText }] };
+      }
+
+      try {
+        res = await fetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const raw = data.candidates?.[0]?.content?.parts?.map(p => p.text).join('\n') ?? '';
+          if (raw && !isRefusal(raw)) return raw;
+          if (data.promptFeedback?.blockReason) {
+            lastError = new Error(`Google AI blocked request: ${data.promptFeedback.blockReason}`);
+          } else {
+            lastError = raw ? new Error(`Google AI (${model}) returned a refusal`) : new Error(`Google AI (${model}) returned empty content`);
+          }
+        } else {
+          const err = await res.text();
+          lastError = new Error(`Google AI (${model}) error ${res.status}: ${err}`);
+          console.log(`Google AI (${model}) failed:`, res.status, err);
+        }
+      } catch (fetchErr) {
+        lastError = fetchErr;
+        console.log(`Google AI (${model}) fetch failed:`, fetchErr.message);
       }
     } else {
-      res = await fetch(env.TEXT_API_URL, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'authorization': `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          messages,
-          temperature: 0.7,
-          max_tokens: maxTokens,
-        }),
-      });
+      try {
+        res = await fetch(textApiUrl, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'authorization': `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            messages,
+            temperature: 0.7,
+            max_tokens: maxTokens,
+          }),
+        });
 
-      if (res.ok) {
-        const data = await res.json();
-        const raw = data.choices?.[0]?.message?.content ?? '';
-        if (raw && !isRefusal(raw)) return raw;
-        lastError = raw ? new Error(`Text API ${model} returned a refusal`) : new Error('Text API returned empty content');
-      } else {
-        const err = await res.text();
-        lastError = new Error(`Text API error ${res.status}: ${err}`);
+        if (res.ok) {
+          const data = await res.json();
+          const raw = data.choices?.[0]?.message?.content ?? '';
+          if (raw && !isRefusal(raw)) return raw;
+          lastError = raw ? new Error(`Text API ${model} returned a refusal`) : new Error(`Text API ${model} returned empty content`);
+        } else {
+          const err = await res.text();
+          lastError = new Error(`Text API error ${res.status}: ${err}`);
+        }
+      } catch (fetchErr) {
+        lastError = fetchErr;
       }
     }
   }
@@ -122,26 +158,58 @@ async function callTextApi(messages, maxTokens, env) {
   throw lastError || new Error('Text API failed for all configured models and fallback providers');
 }
 
-async function generateText({ topic, niche }, env) {
-  const system = `You are an expert, human ${niche} content writer and SEO specialist.
+function cleanSocialPost(text) {
+  if (!text) return '';
+  let cleaned = text.trim();
 
-Return the content using this exact format, with each field on its own line and the BODY at the end:
-TITLE: <compelling, click-worthy blog title under 60 characters>
+  // If there is conversational preamble before the first hook emoji, strip it
+  const firstHookIndex = cleaned.search(/(?:🚀|💡|⚡|🔥|💻|✨|🌐|🔹|#)/);
+  if (firstHookIndex > 0) {
+    const preamble = cleaned.slice(0, firstHookIndex);
+    if (/here (?:is|are)|social media post|\*\*linkedin|\*\*facebook|\*\*instagram/i.test(preamble)) {
+      cleaned = cleaned.slice(firstHookIndex);
+    }
+  }
+
+  cleaned = cleaned
+    // Remove platform labels like "**LinkedIn Post:**", "**Instagram Post:**", etc.
+    .replace(/^(\*{0,2}(?:LinkedIn|Facebook|Instagram|Twitter|X|Social Media)\s*Post:?\*{0,2})\s*\n*/gim, '')
+    // Remove meta headers like "**Here's the breakdown:**", "**Inclusion Formula:**", etc.
+    .replace(/^\*{0,2}(?:Here's the breakdown|Inclusion Formula|Formula|The Breakdown|Key Takeaways?):?\*{0,2}\s*\n*/gim, '')
+    // Strip markdown bold and italic asterisks that show up as raw ** on social media
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    // Ensure every 🔹 or bullet item is on its own separate line with clean spacing
+    .replace(/([^\n])\s*(🔹|🔸|•)\s*/g, '$1\n\n$2 ')
+    // Remove stray asterisks
+    .replace(/\*\*/g, '')
+    // Normalize excessive blank lines
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  return cleaned;
+}
+
+async function generateText({ topic, niche }, env) {
+  const system = `You are a visionary web developer, ${niche} specialist, and high-impact content writer.
+
+Return the content using this EXACT format, with each field on its own line and the BODY at the end:
+TITLE: <compelling, authoritative, insightful title under 60 characters. Avoid generic "Learn How" clichés>
 SLUG: <url-friendly slug>
 FOCUS_KEYWORD: <primary SEO keyword>
 META_DESCRIPTION: <150-160 character meta description>
-EXCERPT: <1-2 sentence summary>
-SOCIAL_POST: <a short, original 120-200 word social media caption for LinkedIn, Facebook, and Instagram. It must be different from the excerpt. Do not include URLs, hashtags, or emojis. End with a question or a conversational call to action.>
+EXCERPT: <1-2 sentence compelling summary of the core insight>
+SOCIAL_POST: <a complete, high-engagement social media post. NO conversational preamble (DO NOT say "Here is a post:", DO NOT say "**LinkedIn Post:**"). DO NOT use markdown bold like **text**. Must start directly with 🚀 Hook, include 🔹 bullets on separate lines, 💡 insight, ⚡ formula, 👇 question CTA, and hashtags #Tag1 #Tag2>
 TAGS: <comma-separated list of 5-7 tags>
-BODY: <comprehensive, human, original HTML content of at least 1000 words. Do not write fewer than 1000 words. Use one <h1>, multiple <h2> and <h3> subheadings, short paragraphs, bullet lists, and practical examples. Mention current tools, recent best practices, and real-world examples where relevant. Avoid generic AI phrases and markdown code blocks.>
+BODY: <comprehensive, human, authoritative HTML content of at least 1000 words. Do not write generic tutorial filler or cliché AI introductions like "In today's fast-paced digital world". Use one <h1>, clear <h2> and <h3> subheadings, practical real-world workflow breakdowns, comparison tables or bullet lists, actionable takeaways, and a strong conclusion. Format with clean HTML semantic tags only.>
 
 Do not add explanations, notes, or sections outside this format.`;
-  const user = `Write a comprehensive, up-to-date, SEO-optimized blog post about: ${topic}`;
+  const user = `Write an authoritative, high-value, comprehensive blog post and matching high-engagement social post about: ${topic}`;
 
   const raw = await callTextApi([
     { role: 'system', content: system },
     { role: 'user', content: user },
-  ], 2500, env);
+  ], 3000, env);
 
   const fields = {
     title: /^TITLE:\s*(.+?)$/im,
@@ -149,7 +217,7 @@ Do not add explanations, notes, or sections outside this format.`;
     focusKeyword: /^FOCUS_KEYWORD:\s*(.+?)$/im,
     metaDescription: /^META_DESCRIPTION:\s*(.+?)$/im,
     excerpt: /^EXCERPT:\s*(.+?)$/im,
-    socialPost: /^SOCIAL_POST:\s*(.+?)$/im,
+    socialPost: /^SOCIAL_POST:\s*([\s\S]+?)(?=\n(?:TAGS|BODY):\s*)/im,
     tags: /^TAGS:\s*(.+?)$/im,
     body: /^BODY:\s*([\s\S]+?)(?:\n(?:TITLE|SLUG|FOCUS_KEYWORD|META_DESCRIPTION|EXCERPT|TAGS|BODY|NOTE|REFERENCE|CONCLUSION):\s*|$)/im,
   };
@@ -168,7 +236,7 @@ Do not add explanations, notes, or sections outside this format.`;
 
   parsed.title = parsed.title.replace(/^(TITLE|Title|title):\s*/i, '').replace(/<[^>]+>/g, '').trim();
   parsed.excerpt = parsed.excerpt.replace(/^(EXCERPT|Excerpt|excerpt):\s*/i, '').replace(/<[^>]+>/g, '').trim();
-  parsed.socialPost = parsed.socialPost.replace(/^(SOCIAL_POST|Social_Post|social_post):\s*/i, '').replace(/<[^>]+>/g, '').trim();
+  parsed.socialPost = cleanSocialPost(parsed.socialPost.replace(/^(SOCIAL_POST|Social_Post|social_post):\s*/i, ''));
   parsed.metaDescription = parsed.metaDescription.replace(/<[^>]+>/g, '').trim();
   parsed.focusKeyword = parsed.focusKeyword.replace(/<[^>]+>/g, '').trim();
 
@@ -205,14 +273,46 @@ function countWords(html) {
 
 async function generateSocialPost({ title, excerpt, body, niche }, env) {
   const summary = excerpt || stripHtml(body).slice(0, 400);
-  const prompt = `You are an expert ${niche} social media copywriter. Write a short, original, engaging 120-200 word social media caption for this post.\n\nTitle: ${title}\nSummary: ${summary}\n\nRequirements:\n- Do not copy the summary word for word.\n- Do not include URLs, hashtags, or emojis.\n- Write a complete paragraph or two.\n- End with a question or a conversational call to action.`;
+  const prompt = `Write a viral, high-engagement social media post for LinkedIn, Facebook, and Instagram about: "${title}".
+
+Core Context: ${summary}
+
+CRITICAL RULES:
+1. Output ONLY the raw post content. NO conversational preamble (DO NOT say "Here is a post...", "Here are three posts...", or "**LinkedIn Post:**").
+2. DO NOT use markdown bold syntax like **text**. Social media platforms do not render markdown asterisks. Write clean plain text with emojis.
+3. Every 🔹 bullet item MUST be on its own line with a blank line between items.
+4. Avoid generic AI clichés like "In today's digital landscape, having a website is no longer a luxury...". Start with genuine excitement, fresh perspective, or a compelling insight.
+
+Follow this EXACT format and spacing:
+
+🚀 [Compelling Hook Headline with Emoji]
+
+[1-2 sentence enthusiastic opening insight with emojis, e.g. 💻✨]
+
+🔹 [First Pillar / Tool] — [Clear, punchy explanation with emoji]
+
+🔹 [Second Pillar / Tool] — [Clear, punchy explanation with emoji]
+
+🔹 [Third Pillar / Tool] — [Clear, punchy explanation with emoji]
+
+💡 The real advantage isn't [common misconception]. It's [the actual solution/combination].
+
+[Tool A] + [Tool B] = [Benefit 1] → [Benefit 2] → [Ultimate Result] ⚡
+
+[1-2 practical sentences explaining how to execute the workflow without starting from a blank page.]
+
+🌐 The future of [topic] isn't [old way]. It's about [smart modern way].
+
+[Conversational engaging question to drive comments]? 👇
+
+#[Tag1] #[Tag2] #[Tag3] #[Tag4] #[Tag5] #[Tag6] #[Tag7] #[Tag8]`;
 
   const raw = await callTextApi([
-    { role: 'system', content: 'You write short, clear social media captions only. No URLs, no emojis, no hashtags.' },
+    { role: 'system', content: 'You write publication-ready, scroll-stopping social media posts. You NEVER output conversational preamble, platform labels, or markdown asterisks (**).' },
     { role: 'user', content: prompt },
-  ], 1000, env);
+  ], 1200, env);
 
-  return raw.replace(/<[^>]+>/g, '').trim();
+  return cleanSocialPost(raw.replace(/<[^>]+>/g, ''));
 }
 
 async function expandBody({ body, title, niche }, env) {
@@ -308,36 +408,83 @@ function buildAIVisualPrompt(topic, niche) {
 }
 
 async function generateImage({ topic, niche }, env) {
+  const prompt = buildAIVisualPrompt(topic, niche);
+  const googleKey = env.GOOGLE_API_KEY || env.GEMINI_API_KEY || env.IMAGE_API_KEY || (env.TEXT_API_URL?.includes('googleapis.com') ? env.TEXT_API_KEY : null);
+
+  if (googleKey) {
+    const imagenModels = Array.from(new Set([
+      env.IMAGE_MODEL,
+      env.FALLBACK_IMAGE_MODEL,
+      'imagen-3.0-generate-002',
+      'imagen-3.0-fast-generate-001',
+    ].filter(Boolean)));
+
+    for (const model of imagenModels) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:predict?key=${encodeURIComponent(googleKey)}`;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            instances: [{ prompt }],
+            parameters: {
+              sampleCount: 1,
+              aspectRatio: '16:9',
+              outputOptions: { mimeType: 'image/jpeg' },
+              personGeneration: 'ALLOW_ADULT',
+              safetySetting: 'block_medium_and_above',
+            },
+          }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const b64 = data.predictions?.[0]?.bytesBase64Encoded;
+          if (b64) {
+            const mimeType = data.predictions[0].mimeType || 'image/jpeg';
+            const ext = mimeType.includes('png') ? 'png' : 'jpeg';
+            const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+            const blob = new Blob([bytes], { type: mimeType });
+            return { blob, ext, contentType: mimeType };
+          }
+        } else {
+          const errText = await res.text();
+          console.log(`Google Imagen (${model}) failed (${res.status}):`, errText);
+        }
+      } catch (err) {
+        console.log(`Google Imagen (${model}) exception:`, err.message);
+      }
+    }
+  }
+
+  if (env.AI) {
+    try {
+      const result = await env.AI.run('@cf/black-forest-labs/flux-1-schnell', { prompt });
+      const b64 = result.image;
+      if (typeof b64 === 'string' && b64) {
+        const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+        const blob = new Blob([bytes], { type: 'image/jpeg' });
+        return { blob, ext: 'jpeg', contentType: 'image/jpeg' };
+      }
+    } catch (e) {
+      if (e.message?.includes('8007') || e.message?.includes('NSFW')) {
+        console.log('Cloudflare AI rejected the image as unsafe');
+      } else {
+        console.log('Cloudflare AI failed:', e.message);
+      }
+    }
+  }
+
   if (env.UNSPLASH_ACCESS_KEY) {
     try {
       const queries = getUnsplashQueries(topic, niche);
       return await fetchUnsplashImage(queries, env.UNSPLASH_ACCESS_KEY);
     } catch (e) {
-      console.log('Unsplash failed, trying Cloudflare AI:', e.message);
+      console.log('Unsplash failed:', e.message);
     }
   }
 
-  if (!env.AI) {
-    throw new Error('AI binding not configured. Add [ai] binding = "AI" to wrangler.toml.');
-  }
-
-  const prompt = buildAIVisualPrompt(topic, niche);
-  try {
-    const result = await env.AI.run('@cf/black-forest-labs/flux-1-schnell', { prompt });
-    const b64 = result.image;
-    if (typeof b64 === 'string' && b64) {
-      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-      const blob = new Blob([bytes], { type: 'image/jpeg' });
-      return { blob, ext: 'jpeg', contentType: 'image/jpeg' };
-    }
-  } catch (e) {
-    if (e.message?.includes('8007') || e.message?.includes('NSFW')) {
-      throw new Error('Cloudflare AI rejected the image as unsafe');
-    }
-    console.log('Cloudflare AI failed:', e.message);
-  }
-
-  throw new Error('Image generation failed');
+  throw new Error('Image generation failed. Configure Google Imagen (GOOGLE_API_KEY), Cloudflare Workers AI ([ai] binding), or UNSPLASH_ACCESS_KEY.');
 }
 
 
@@ -498,6 +645,18 @@ function formatHashtags(tags) {
   return tags.map(t => '#' + t.trim().replace(/[\s-]+/g, '').toLowerCase()).join(' ');
 }
 
+function buildSocialPostText(text) {
+  let content = (text.socialPost || '').trim();
+  if (!content) {
+    content = `${text.title}\n\n${text.excerpt || ''}`;
+  }
+  if (!content.includes('#') && text.tags?.length) {
+    const hashtags = formatHashtags(text.tags);
+    if (hashtags) content += `\n\n${hashtags}`;
+  }
+  return content;
+}
+
 async function postToLinkedIn({ text, env, media }) {
   const token = env.LINKEDIN_ACCESS_TOKEN;
   if (!token) {
@@ -505,8 +664,7 @@ async function postToLinkedIn({ text, env, media }) {
   }
 
   const author = await getLinkedInAuthor(token, env);
-  const hashtags = formatHashtags(text.tags);
-  const shareText = `📝 ${text.title}\n\n${text.socialPost}${hashtags ? '\n\n' + hashtags : ''}`;
+  const shareText = buildSocialPostText(text);
 
   const shareContent = {
     shareCommentary: { text: shareText },
@@ -559,8 +717,7 @@ async function postToInstagram({ text, media, env }) {
     throw new Error('Instagram requires a featured image. WordPress must succeed first.');
   }
 
-  const hashtags = formatHashtags(text.tags);
-  const caption = `✅ ${text.title}\n\n${text.socialPost}\n\n💡 Save this and share your thoughts below.${hashtags ? '\n\n' + hashtags : ''}`;
+  const caption = buildSocialPostText(text);
   const createRes = await fetch(`https://graph.facebook.com/v19.0/${accountId}/media?image_url=${encodeURIComponent(media.source_url)}&caption=${encodeURIComponent(caption)}&access_token=${token}`, { method: 'POST' });
   if (!createRes.ok) {
     const err = await createRes.text();
@@ -651,8 +808,7 @@ async function postToFacebook({ text, env, mediaUrl }) {
   }
 
   const pageToken = await getFacebookPageToken(pageId, userToken);
-  const hashtags = formatHashtags(text.tags);
-  const message = `📝 ${text.title}\n\n${text.socialPost}${hashtags ? '\n\n' + hashtags : ''}`;
+  const message = buildSocialPostText(text);
   const params = new URLSearchParams({ message, access_token: pageToken });
 
   if (mediaUrl) {
@@ -919,9 +1075,17 @@ function getCookie(request, name) {
 
 async function isAuthenticated(request, env) {
   if (!env.DASHBOARD_PASSWORD) return true;
+  const authHeader = request.headers.get('authorization') || '';
+  if (authHeader.startsWith('Bearer ')) {
+    const token = authHeader.slice(7).trim();
+    if (token === env.DASHBOARD_PASSWORD) return true;
+  }
+  const apiKeyHeader = request.headers.get('x-api-key') || '';
+  if (apiKeyHeader && apiKeyHeader === env.DASHBOARD_PASSWORD) return true;
+
   const expected = await hashPassword(env.DASHBOARD_PASSWORD);
-  const token = getCookie(request, 'dashboard-auth');
-  return token === expected;
+  const cookieToken = getCookie(request, 'dashboard-auth');
+  return cookieToken === expected;
 }
 
 function loginHtml(error = '') {
@@ -1014,9 +1178,9 @@ function dashboardHtml(env) {
       <div class="card">
         <h2>Current config</h2>
         <ul>
-          <li>Text provider: <strong>${env.TEXT_API_URL?.includes('openrouter.ai') ? 'OpenRouter Qwen' : (env.TEXT_API_URL?.includes('googleapis.com') ? 'Google Gemini' : 'Custom')}</strong></li>
-          <li>Primary model: <code>${env.TEXT_MODEL || '—'}</code></li>
-          <li>Image source: <strong>Unsplash &rarr; Cloudflare Workers AI</strong></li>
+          <li>Text provider: <strong>${(env.TEXT_API_URL?.includes('googleapis.com') || env.GOOGLE_API_KEY || env.GEMINI_API_KEY) ? 'Google Gemini' : (env.TEXT_API_URL?.includes('openrouter.ai') ? 'OpenRouter' : (env.TEXT_API_URL?.includes('groq.com') ? 'Groq' : 'Custom'))}</strong></li>
+          <li>Primary model: <code>${env.TEXT_MODEL || 'gemini-2.5-flash'}</code></li>
+          <li>Image source: <strong>Google Imagen 3 &rarr; Cloudflare Workers AI &rarr; Unsplash</strong></li>
           <li>Notification email: ${env.NOTIFICATION_EMAIL || '—'}</li>
         </ul>
       </div>
@@ -1126,7 +1290,7 @@ export default {
       return new Response('', { status: 302, headers });
     }
 
-    if (url.pathname === '/' || url.pathname === '/dashboard') {
+    if ((url.pathname === '/' || url.pathname === '/dashboard') && request.method === 'GET') {
       if (!(await isAuthenticated(request, env))) {
         return new Response(loginHtml(), { headers: { 'content-type': 'text/html; charset=utf-8' } });
       }

@@ -13,22 +13,22 @@ A Cloudflare Worker that automatically generates AI-written blog posts and publi
 
 ## Architecture
 
-- `src/index.js` — main Cloudflare Worker (Hono-style export with `fetch` and `scheduled` handlers).
+- `src/index.js` — main Cloudflare Worker (export with `fetch` and `scheduled` handlers).
 - `wrangler.toml` — Cloudflare configuration, cron triggers, variables, and KV namespace.
 - `.dev.vars` — local secrets (not committed).
-- Cloudflare Workers AI binding — image fallback (`@cf/black-forest-labs/flux-1-schnell`).
-- Groq-compatible OpenAI endpoint — text generation.
+- Google Gemini (`gemini-2.5-flash`) — SEO-optimized text & social post generation.
+- Google Imagen 3 (`imagen-3.0-generate-002`) & Cloudflare Workers AI — featured image generation.
 
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) 18+
 - [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/install-and-update/)
 - Cloudflare account
-- Groq API key (or any OpenAI-compatible endpoint)
+- Google AI Studio API key (free at [aistudio.google.com](https://aistudio.google.com))
 - WordPress site with Application Passwords enabled
 - Facebook app and Page with permissions
 - Resend account (for email notifications)
-- Unsplash API key (optional, for better images)
+- Unsplash API key (optional, for stock photos)
 
 ## Installation
 
@@ -53,45 +53,28 @@ A Cloudflare Worker that automatically generates AI-written blog posts and publi
 
 ## Configuration
 
-### 1. Text generation (Groq)
+### 1. AI Generation (Google Gemini & Imagen 3)
 
-Set your text API key as a Wrangler secret:
+Set your Google AI Studio API key as a Wrangler secret:
 
 ```bash
-npx wrangler secret put TEXT_API_KEY
+npx wrangler secret put GOOGLE_API_KEY
 ```
 
-The default endpoint and model are in `wrangler.toml`:
+The default models and endpoints in `wrangler.toml`:
 
 ```toml
-TEXT_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-TEXT_MODEL = "allam-2-7b"
+TEXT_API_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+TEXT_MODEL = "gemini-2.5-flash"
+FALLBACK_TEXT_MODEL = "gemini-2.0-flash"
+IMAGE_MODEL = "imagen-3.0-generate-002"
+FALLBACK_IMAGE_MODEL = "imagen-3.0-fast-generate-001"
 ```
 
-You can override them by editing `wrangler.toml` or setting `TEXT_API_URL` / `TEXT_MODEL` in `.dev.vars`.
+You can override them by editing `wrangler.toml` or setting them in `.dev.vars`.
 
-#### Optional fallback provider (e.g. free.ai)
-
-If you want a third-level fallback, set a different OpenAI-compatible endpoint:
-
-```bash
-npx wrangler secret put FALLBACK_TEXT_API_URL  # e.g. https://api.free.ai/v1/chat/completions
-npx wrangler secret put FALLBACK_TEXT_API_KEY
-```
-
-You can set one model:
-
-```bash
-npx wrangler secret put FALLBACK_TEXT_API_MODEL  # e.g. meta-llama/llama-3.1-8b-instruct
-```
-
-Or multiple models as a JSON array:
-
-```bash
-npx wrangler secret put FALLBACK_TEXT_API_MODELS  # e.g. ["model-1","model-2"]
-```
-
-The Worker tries the primary Groq model, then the Groq fallback model, then each external model in order. If all of them fail, the run errors out.
+The Worker tries the primary Gemini model (`gemini-2.5-flash`), then fallback models (`gemini-2.0-flash`), and then Cloudflare Workers AI.
+For images, it tries **Google Imagen 3**, then falls back to **Cloudflare Workers AI (Flux 1 Schnell)**, then **Unsplash**.
 
 ### 2. WordPress
 
@@ -164,15 +147,18 @@ FROM_EMAIL = "hello@yourdomain.com"
 
 You must verify the `FROM_EMAIL` domain at https://resend.com/domains before emails can be sent to third-party addresses.
 
-### 5. Unsplash images (optional)
+### 5. Images (Google Imagen, Cloudflare Flux & Unsplash)
 
-For real stock photos instead of AI-generated images:
+Featured images are generated using:
+1. **Google Imagen 3** (`imagen-3.0-generate-002`) if `GOOGLE_API_KEY` is provided with billing.
+2. **Cloudflare Workers AI** (`@cf/black-forest-labs/flux-1-schnell`) via the free `[ai]` binding.
+3. **Unsplash** (if `UNSPLASH_ACCESS_KEY` is set).
+
+To use Unsplash stock photos as a secondary source:
 
 ```bash
 npx wrangler secret put UNSPLASH_ACCESS_KEY
 ```
-
-The Worker tries Unsplash first, then Pollinations, then Cloudflare Workers AI.
 
 ### 6. Cron schedule and topics
 

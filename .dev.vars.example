@@ -1,21 +1,18 @@
 # Copy this file to .dev.vars and fill in your real values.
 # .dev.vars is NOT committed to Git and is only used by wrangler dev.
 #
-# Free text API options:
-#   - Groq free tier: https://console.groq.com (OpenAI-compatible)
-#   - free.ai: https://free.ai (30k tokens/day, no card)
-#   - Google Gemini: https://aistudio.google.com (not OpenAI-compatible; requires adapter)
-#
-# Only the API key and WordPress password need to be secret.
-# Add TEXT_API_URL and TEXT_MODEL here if you want to override wrangler.toml defaults.
-TEXT_API_KEY=gsk_...
+# Google AI Studio API key (get free key at https://aistudio.google.com):
+# GOOGLE_API_KEY is used for Gemini text generation and Imagen image generation.
+GOOGLE_API_KEY=AIzaSy...
+# Alternatively, TEXT_API_KEY works as well:
+# TEXT_API_KEY=AIzaSy...
 
-# Optional second fallback provider (e.g. free.ai).
-# Used only if both TEXT_MODEL and FALLBACK_TEXT_MODEL in wrangler.toml fail.
-# FALLBACK_TEXT_API_URL=https://api.free.ai/v1/chat/completions
-# FALLBACK_TEXT_API_KEY=
-# FALLBACK_TEXT_API_MODEL=single-model-id
-# FALLBACK_TEXT_API_MODELS=["model-id-1","model-id-2"]
+# Optional overrides (defaults are in wrangler.toml):
+# TEXT_API_URL=https://generativelanguage.googleapis.com/v1beta/models
+# TEXT_MODEL=gemini-2.5-flash
+# FALLBACK_TEXT_MODEL=gemini-2.0-flash
+# IMAGE_MODEL=imagen-3.0-generate-002
+# FALLBACK_IMAGE_MODEL=imagen-3.0-fast-generate-001
 
 # WordPress credentials for testing (also needed in .dev.vars).
 # In production, set WP_APP_PASSWORD with `wrangler secret put WP_APP_PASSWORD`.
