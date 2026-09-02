@@ -162,6 +162,9 @@ function cleanSocialPost(text) {
   if (!text) return '';
   let cleaned = text.trim();
 
+  // Strip leading SOCIAL_POST label if present (e.g. **SOCIAL_POST:**, SOCIAL_POST:, etc.)
+  cleaned = cleaned.replace(/^[ \t]*(?:#{1,6}\s*)?(?:[*_]{1,3})?(?:SOCIAL[ _-]POST)(?:[*_]{1,3})?:?[#*_\s]*\n?/i, '').trim();
+
   // If there is conversational preamble before the first hook emoji, strip it
   const firstHookIndex = cleaned.search(/(?:🚀|💡|⚡|🔥|💻|✨|🌐|🔹|#)/);
   if (firstHookIndex > 0) {
@@ -190,10 +193,85 @@ function cleanSocialPost(text) {
   return cleaned;
 }
 
+function cleanScalarField(val) {
+  if (!val) return '';
+  let s = val.trim();
+  // Strip markdown code fences if any
+  s = s.replace(/^`+|`+$/g, '');
+  // Strip leading/trailing markdown bold, italic, headers, colons, spaces
+  s = s.replace(/^[#*_\s]+/, '').replace(/[#*_\s]+$/, '');
+  // Strip surrounding quotes or brackets
+  s = s.replace(/^["'\[]+|["'\]]+$/g, '').trim();
+  // Strip leftover label prefixes (e.g. TITLE:, **TITLE:**, ## TITLE:)
+  s = s.replace(/^[#*_\s]*(?:TITLE|SLUG|FOCUS[ _-]KEYWORD|META[ _-]DESCRIPTION|EXCERPT|TAGS)[#*_\s]*:?[#*_\s]*/i, '').trim();
+  // Strip any remaining markdown formatting or quotes
+  s = s.replace(/^[#*_\s]+/, '').replace(/[#*_\s]+$/, '');
+  s = s.replace(/^["']|["']$/g, '').trim();
+  // Strip HTML tags
+  s = s.replace(/<[^>]+>/g, '').trim();
+  return s;
+}
+
+function cleanBodyContent(body, raw) {
+  let b = (body || raw || '').trim();
+  // Strip markdown code block fences (e.g. ```html ... ```)
+  b = b.replace(/^```(?:html)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
+  // Strip any metadata label lines accidentally prepended to the body
+  b = b.replace(/^[ \t]*(?:#{1,6}\s*)?(?:[*_]{1,3})?(?:TITLE|SLUG|FOCUS[ _-]KEYWORD|META[ _-]DESCRIPTION|EXCERPT|SOCIAL[ _-]POST|TAGS|BODY)(?:[*_]{1,3})?:?[#*_\s]*[^\n]*(?:\n+|$)/gim, '').trim();
+  // Strip trailing notes or conclusion sections
+  b = b.replace(/\n(?:[#*_\s]*(?:NOTE|NOTES|REFERENCES?|CONCLUSION)[#*_\s]*:?[\s\S]*)$/i, '').trim();
+  return b;
+}
+
+function parseRawLlmResponse(raw) {
+  const fieldDefs = [
+    { key: 'title', regex: /^TITLE$/i },
+    { key: 'slug', regex: /^SLUG$/i },
+    { key: 'focusKeyword', regex: /^FOCUS[ _-]KEYWORD$/i },
+    { key: 'metaDescription', regex: /^META[ _-]DESCRIPTION$/i },
+    { key: 'excerpt', regex: /^EXCERPT$/i },
+    { key: 'socialPost', regex: /^SOCIAL[ _-]POST$/i },
+    { key: 'tags', regex: /^TAGS$/i },
+    { key: 'body', regex: /^BODY$/i },
+    { key: 'note', regex: /^(?:NOTE|NOTES|REFERENCES?|CONCLUSION)$/i },
+  ];
+
+  const markerRegex = /^[ \t]*(?:#{1,6}\s*)?(?:[*_]{1,3})?(TITLE|SLUG|FOCUS[ _-]KEYWORD|META[ _-]DESCRIPTION|EXCERPT|SOCIAL[ _-]POST|TAGS|BODY|NOTE|NOTES|REFERENCES?|CONCLUSION)(?:[*_]{1,3})?:?[#*_\s]*/gim;
+
+  const matches = [];
+  let m;
+  while ((m = markerRegex.exec(raw)) !== null) {
+    const matchedDef = fieldDefs.find(f => f.regex.test(m[1]));
+    if (matchedDef) {
+      matches.push({
+        key: matchedDef.key,
+        index: m.index,
+        headerLength: m[0].length,
+      });
+    }
+  }
+
+  const parsed = {};
+  for (let i = 0; i < matches.length; i++) {
+    const current = matches[i];
+    const next = matches[i + 1];
+    const contentStart = current.index + current.headerLength;
+    const contentEnd = next ? next.index : raw.length;
+    parsed[current.key] = raw.slice(contentStart, contentEnd).trim();
+  }
+
+  return parsed;
+}
+
 async function generateText({ topic, niche }, env) {
   const system = `You are a visionary web developer, ${niche} specialist, and high-impact content writer.
 
-Return the content using this EXACT format, with each field on its own line and the BODY at the end:
+IMPORTANT FORMATTING RULES:
+- Output each field label EXACTLY as shown in plain text (e.g. "TITLE: ...", "SLUG: ...").
+- NEVER format labels with markdown bold, asterisks, or headings (DO NOT write "**TITLE:**", "**BODY:**", or "## TITLE").
+- Start directly with TITLE:. Do not include conversational greetings or preamble.
+
+Return the content using this EXACT format:
 TITLE: <compelling, authoritative, insightful title under 60 characters. Avoid generic "Learn How" clichés>
 SLUG: <url-friendly slug>
 FOCUS_KEYWORD: <primary SEO keyword>
@@ -201,7 +279,7 @@ META_DESCRIPTION: <150-160 character meta description>
 EXCERPT: <1-2 sentence compelling summary of the core insight>
 SOCIAL_POST: <a complete, high-engagement social media post. NO conversational preamble (DO NOT say "Here is a post:", DO NOT say "**LinkedIn Post:**"). DO NOT use markdown bold like **text**. Must start directly with 🚀 Hook, include 🔹 bullets on separate lines, 💡 insight, ⚡ formula, 👇 question CTA, and hashtags #Tag1 #Tag2>
 TAGS: <comma-separated list of 5-7 tags>
-BODY: <comprehensive, human, authoritative HTML content of at least 1000 words. Do not write generic tutorial filler or cliché AI introductions like "In today's fast-paced digital world". Use one <h1>, clear <h2> and <h3> subheadings, practical real-world workflow breakdowns, comparison tables or bullet lists, actionable takeaways, and a strong conclusion. Format with clean HTML semantic tags only.>
+BODY: <comprehensive, human, authoritative HTML content of at least 1000 words. Do not write generic tutorial filler or cliché AI introductions like "In today's fast-paced digital world". Use one <h1>, clear <h2> and <h3> subheadings, practical real-world workflow breakdowns, comparison tables or bullet lists, actionable takeaways, and a strong conclusion. Format with clean HTML semantic tags only. Do not wrap in markdown code blocks.>
 
 Do not add explanations, notes, or sections outside this format.`;
   const user = `Write an authoritative, high-value, comprehensive blog post and matching high-engagement social post about: ${topic}`;
@@ -211,59 +289,53 @@ Do not add explanations, notes, or sections outside this format.`;
     { role: 'user', content: user },
   ], 3000, env);
 
-  const fields = {
-    title: /^TITLE:\s*(.+?)$/im,
-    slug: /^SLUG:\s*(.+?)$/im,
-    focusKeyword: /^FOCUS_KEYWORD:\s*(.+?)$/im,
-    metaDescription: /^META_DESCRIPTION:\s*(.+?)$/im,
-    excerpt: /^EXCERPT:\s*(.+?)$/im,
-    socialPost: /^SOCIAL_POST:\s*([\s\S]+?)(?=\n(?:TAGS|BODY):\s*)/im,
-    tags: /^TAGS:\s*(.+?)$/im,
-    body: /^BODY:\s*([\s\S]+?)(?:\n(?:TITLE|SLUG|FOCUS_KEYWORD|META_DESCRIPTION|EXCERPT|TAGS|BODY|NOTE|REFERENCE|CONCLUSION):\s*|$)/im,
-  };
-
-  const parsed = {};
-  for (const [key, regex] of Object.entries(fields)) {
-    const match = raw.match(regex);
-    parsed[key] = match ? match[1].trim() : '';
-  }
+  const parsed = parseRawLlmResponse(raw);
 
   if (!parsed.title || !parsed.body) {
-    const lines = raw.split('\n').filter(line => line.trim());
-    parsed.title = lines[0] || `All about ${topic}`;
-    parsed.body = lines.slice(1).join('\n').trim() || raw;
+    const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
+    if (!parsed.title) {
+      parsed.title = lines[0] || `All about ${topic}`;
+    }
+    if (!parsed.body) {
+      parsed.body = lines.slice(1).join('\n').trim() || raw;
+    }
   }
 
-  parsed.title = parsed.title.replace(/^(TITLE|Title|title):\s*/i, '').replace(/<[^>]+>/g, '').trim();
-  parsed.excerpt = parsed.excerpt.replace(/^(EXCERPT|Excerpt|excerpt):\s*/i, '').replace(/<[^>]+>/g, '').trim();
-  parsed.socialPost = cleanSocialPost(parsed.socialPost.replace(/^(SOCIAL_POST|Social_Post|social_post):\s*/i, ''));
-  parsed.metaDescription = parsed.metaDescription.replace(/<[^>]+>/g, '').trim();
-  parsed.focusKeyword = parsed.focusKeyword.replace(/<[^>]+>/g, '').trim();
+  const title = cleanScalarField(parsed.title) || `All about ${topic}`;
+  const slug = cleanScalarField(parsed.slug) || slugify(title) || slugify(topic);
+  const focusKeyword = cleanScalarField(parsed.focusKeyword) || topic;
+  let body = cleanBodyContent(parsed.body, raw);
+  const excerpt = cleanScalarField(parsed.excerpt) || cleanScalarField(parsed.metaDescription) || stripHtml(body).slice(0, 160).trim();
+  const metaDescription = cleanScalarField(parsed.metaDescription) || excerpt;
 
-  if (!parsed.body.startsWith('<')) {
-    parsed.body = `<p>${parsed.body.replace(/\n\n/g, '</p><p>')}</p>`;
+  const rawSocial = parsed.socialPost || excerpt || stripHtml(body).slice(0, 300).trim();
+  let socialPost = cleanSocialPost(rawSocial);
+
+  if (!body.startsWith('<')) {
+    body = `<p>${body.replace(/\n\n+/g, '</p><p>').replace(/\n/g, '<br/>')}</p>`;
   }
 
-  if (countWords(parsed.body) < 800) {
-    parsed.body = await expandBody({ body: parsed.body, title: parsed.title, niche }, env);
+  if (countWords(body) < 800) {
+    body = await expandBody({ body, title, niche }, env);
   }
 
-  if (!parsed.socialPost || parsed.socialPost.length < 80) {
-    parsed.socialPost = await generateSocialPost({ title: parsed.title, excerpt: parsed.excerpt, body: parsed.body, niche }, env);
+  if (!socialPost || socialPost.length < 80) {
+    socialPost = await generateSocialPost({ title, excerpt, body, niche }, env);
   }
 
-  const slug = parsed.slug || slugify(parsed.title) || slugify(topic);
-  const tags = parsed.tags ? parsed.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
+  const tags = parsed.tags
+    ? cleanScalarField(parsed.tags).split(',').map(t => cleanScalarField(t)).filter(Boolean)
+    : [];
 
   return {
-    title: parsed.title,
+    title,
     slug,
-    focusKeyword: parsed.focusKeyword || topic,
-    metaDescription: parsed.metaDescription || parsed.excerpt || parsed.body.slice(0, 160),
-    excerpt: parsed.excerpt || parsed.metaDescription || parsed.body.slice(0, 200),
-    socialPost: parsed.socialPost || parsed.excerpt || parsed.body.slice(0, 300),
+    focusKeyword,
+    metaDescription,
+    excerpt,
+    socialPost,
     tags,
-    body: parsed.body,
+    body,
   };
 }
 
@@ -322,9 +394,9 @@ async function expandBody({ body, title, niche }, env) {
     { role: 'system', content: 'You are a helpful content expansion assistant. Return HTML body only.' },
     { role: 'user', content: prompt },
   ], 2000, env);
-  raw = raw.replace(/^```html\n?/, '').replace(/```\s*$/, '').trim();
+  raw = cleanBodyContent(raw, body);
   if (!raw.startsWith('<')) {
-    raw = `<p>${raw.replace(/\n\n/g, '</p><p>')}</p>`;
+    raw = `<p>${raw.replace(/\n\n+/g, '</p><p>').replace(/\n/g, '<br/>')}</p>`;
   }
   return raw || body;
 }
@@ -1019,7 +1091,7 @@ async function runPost(body, env) {
     success: true,
     results,
     title: text.title,
-    excerpt: text.excerpt || text.body.slice(0, 200),
+    excerpt: text.excerpt || stripHtml(text.body).slice(0, 200),
     socialPost: text.socialPost,
   };
 }
