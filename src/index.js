@@ -622,6 +622,48 @@ async function createPostOnWordPress(wp, { title, body, mediaId, status, seo }) 
   return await res.json();
 }
 
+async function testWordPressConnection(wp) {
+  if (!wp.url || !wp.username || !wp.appPassword) {
+    throw new Error('Missing WordPress configuration. Set WP_URL, WP_USERNAME, and WP_APP_PASSWORD secrets.');
+  }
+  const auth = btoa(`${wp.username}:${wp.appPassword}`);
+  const base = wpBaseUrl(wp);
+  const endpoint = `${base}/wp-json/wp/v2/users/me?context=edit`;
+
+  const res = await fetch(endpoint, {
+    headers: {
+      'authorization': `Basic ${auth}`,
+      'user-agent': 'Cloudflare-Worker-AutoPoster/1.0',
+    },
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    let parsed;
+    try { parsed = JSON.parse(text); } catch {}
+    const msg = parsed?.message || text || res.statusText;
+    throw new Error(`WordPress connection failed (HTTP ${res.status}): ${msg}`);
+  }
+
+  const user = await res.json();
+  return {
+    success: true,
+    site: base,
+    user: {
+      id: user.id,
+      name: user.name,
+      username: user.slug || user.name,
+      roles: user.roles || [],
+      capabilities: {
+        publish_posts: user.capabilities?.publish_posts ?? true,
+        upload_files: user.capabilities?.upload_files ?? true,
+        edit_posts: user.capabilities?.edit_posts ?? true,
+      },
+    },
+    message: `Connected successfully to ${base} as "${user.name}" (${(user.roles || []).join(', ')})`,
+  };
+}
+
 function buildWpConfig(body, env) {
   return {
     url: body.wp?.url || env.WP_URL,
@@ -1263,6 +1305,13 @@ function dashboardHtml(env) {
       </div>
 
       <div class="card">
+        <h2>WordPress connection</h2>
+        <p style="color:var(--muted);margin-bottom:0.75rem;font-size:0.9rem;">Test credentials and REST API access to your WordPress site.</p>
+        <button type="button" id="testWpBtn" style="background:#3b82f6;color:#fff;">Test WordPress Connection</button>
+        <div id="wpTestResult" style="margin-top:0.75rem;"></div>
+      </div>
+
+      <div class="card">
         <h2>Manual post</h2>
         <form id="postForm">
           <label for="topic">Topic</label>
@@ -1293,6 +1342,28 @@ function dashboardHtml(env) {
   </div>
 
   <script>
+    document.getElementById('testWpBtn')?.addEventListener('click', async () => {
+      const btn = document.getElementById('testWpBtn');
+      const result = document.getElementById('wpTestResult');
+      btn.disabled = true;
+      btn.textContent = 'Testing connection...';
+      result.innerHTML = '';
+      try {
+        const res = await fetch('/test-wp');
+        const data = await res.json();
+        if (data.success) {
+          result.innerHTML = '<p class="success">✅ ' + data.message + '</p><pre>' + JSON.stringify(data.user, null, 2) + '</pre>';
+        } else {
+          result.innerHTML = '<p class="error">❌ ' + (data.error || 'Connection failed') + '</p>';
+        }
+      } catch (err) {
+        result.innerHTML = '<p class="error">❌ Network error: ' + err.message + '</p>';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Test WordPress Connection';
+      }
+    });
+
     document.getElementById('postForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const btn = document.getElementById('submitBtn');
@@ -1369,6 +1440,26 @@ export default {
       return new Response(dashboardHtml(env), {
         headers: { 'content-type': 'text/html; charset=utf-8' },
       });
+    }
+
+    if (url.pathname === '/test-wp') {
+      if (!(await isAuthenticated(request, env))) {
+        return jsonResponse({ success: false, error: 'Authentication required' }, 401);
+      }
+      let customWp = {};
+      if (request.method === 'POST') {
+        try {
+          const body = await request.json();
+          if (body.wp) customWp = body.wp;
+        } catch {}
+      }
+      const wp = buildWpConfig({ wp: customWp }, env);
+      try {
+        const result = await testWordPressConnection(wp);
+        return jsonResponse(result);
+      } catch (err) {
+        return jsonResponse({ success: false, error: err.message }, 500);
+      }
     }
 
     if (url.pathname === '/refresh-facebook-token') {
