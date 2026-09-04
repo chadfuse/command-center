@@ -626,51 +626,79 @@ async function testWordPressConnection(wp) {
   if (!wp.url || !wp.username || !wp.appPassword) {
     throw new Error('Missing WordPress configuration. Set WP_URL, WP_USERNAME, and WP_APP_PASSWORD secrets.');
   }
-  const auth = btoa(`${wp.username}:${wp.appPassword}`);
+
   const base = wpBaseUrl(wp);
   const endpoint = `${base}/wp-json/wp/v2/users/me?context=edit`;
+  const cleanUsername = wp.username.trim();
+  const rawPassword = wp.appPassword.trim();
+  const noSpacesPassword = rawPassword.replace(/\s+/g, '');
 
-  const res = await fetch(endpoint, {
-    headers: {
-      'authorization': `Basic ${auth}`,
-      'user-agent': 'Cloudflare-Worker-AutoPoster/1.0',
-    },
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    let parsed;
-    try { parsed = JSON.parse(text); } catch {}
-    const msg = parsed?.message || text || res.statusText;
-    throw new Error(`WordPress connection failed (HTTP ${res.status}): ${msg}`);
+  // Try raw password first, then fallback to password without spaces
+  const passwordVariants = [rawPassword];
+  if (noSpacesPassword !== rawPassword) {
+    passwordVariants.push(noSpacesPassword);
   }
 
-  const user = await res.json();
+  let lastRes = null;
+  let lastText = '';
+  let successfulUser = null;
+
+  for (const pwd of passwordVariants) {
+    const auth = btoa(`${cleanUsername}:${pwd}`);
+    const res = await fetch(endpoint, {
+      headers: {
+        'authorization': `Basic ${auth}`,
+        'user-agent': 'Cloudflare-Worker-AutoPoster/1.0',
+        'accept': 'application/json',
+      },
+    });
+
+    if (res.ok) {
+      successfulUser = await res.json();
+      break;
+    }
+    lastRes = res;
+    lastText = await res.text();
+  }
+
+  if (!successfulUser) {
+    let parsed;
+    try { parsed = JSON.parse(lastText); } catch {}
+    const msg = parsed?.message || lastText || lastRes?.statusText || 'Unknown error';
+    const serverHeader = lastRes?.headers?.get('server') || 'unknown';
+
+    let advice = 'Check that your WP_USERNAME is the exact WordPress username and that the Application Password is active.';
+    if (lastRes?.status === 401) {
+      advice += ' If using Apache/cPanel/LiteSpeed, ensure your .htaccess passes Authorization headers: `SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1`';
+    }
+
+    throw new Error(`WordPress connection failed (HTTP ${lastRes?.status}): ${msg} | Site: ${base} | User: ${cleanUsername} | Password length: ${rawPassword.length} chars | Server: ${serverHeader} | Tip: ${advice}`);
+  }
+
   return {
     success: true,
     site: base,
     user: {
-      id: user.id,
-      name: user.name,
-      username: user.slug || user.name,
-      roles: user.roles || [],
+      id: successfulUser.id,
+      name: successfulUser.name,
+      username: successfulUser.slug || successfulUser.name,
+      roles: successfulUser.roles || [],
       capabilities: {
-        publish_posts: user.capabilities?.publish_posts ?? true,
-        upload_files: user.capabilities?.upload_files ?? true,
-        edit_posts: user.capabilities?.edit_posts ?? true,
+        publish_posts: successfulUser.capabilities?.publish_posts ?? true,
+        upload_files: successfulUser.capabilities?.upload_files ?? true,
+        edit_posts: successfulUser.capabilities?.edit_posts ?? true,
       },
     },
-    message: `Connected successfully to ${base} as "${user.name}" (${(user.roles || []).join(', ')})`,
+    message: `Connected successfully to ${base} as "${successfulUser.name}" (${(successfulUser.roles || []).join(', ')})`,
   };
 }
 
 function buildWpConfig(body, env) {
-  return {
-    url: body.wp?.url || env.WP_URL,
-    username: body.wp?.username || env.WP_USERNAME,
-    appPassword: body.wp?.appPassword || env.WP_APP_PASSWORD,
-    status: body.wp?.status || env.WP_STATUS || 'draft',
-  };
+  const url = (body.wp?.url || env.WP_URL || '').trim();
+  const username = (body.wp?.username || env.WP_USERNAME || '').trim();
+  const appPassword = (body.wp?.appPassword || env.WP_APP_PASSWORD || '').trim();
+  const status = (body.wp?.status || env.WP_STATUS || 'draft').trim();
+  return { url, username, appPassword, status };
 }
 
 function stripHtml(html) {
