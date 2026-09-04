@@ -1443,9 +1443,6 @@ export default {
     }
 
     if (url.pathname === '/test-wp') {
-      if (!(await isAuthenticated(request, env))) {
-        return jsonResponse({ success: false, error: 'Authentication required' }, 401);
-      }
       let customWp = {};
       if (request.method === 'POST') {
         try {
