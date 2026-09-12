@@ -401,7 +401,7 @@ async function expandBody({ body, title, niche }, env) {
   return raw || body;
 }
 
-function getUnsplashQueries(topic, niche) {
+function getStockPhotoQueries(topic, niche, title) {
   const stopwords = new Set([
     'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'has', 'he',
     'in', 'is', 'it', 'its', 'of', 'on', 'that', 'the', 'to', 'was', 'were',
@@ -409,36 +409,176 @@ function getUnsplashQueries(topic, niche) {
     'best', 'guide', 'mastering', 'unlocking', 'building', 'step', 'steps',
     'testing', 'review', 'vs', 'versus', 'easy', 'simple', 'fast', 'complete',
     'ultimate', 'top', 'new', 'latest', 'using', 'way', 'ways', 'tips', 'tricks',
-    'tutorial', 'introduction', 'deep', 'dive', 'hands', 'on'
+    'tutorial', 'introduction', 'deep', 'dive', 'hands', 'on', 'all', 'about',
+    'can', 'we', 'you', 'make', 'sure', 'post', 'posts'
   ]);
 
-  const cleanWords = (topic || '')
+  const words = `${title || ''} ${topic || ''}`
     .toLowerCase()
     .replace(/[^\w\s]/g, ' ')
     .split(/\s+/)
     .filter(w => w.length > 2 && !stopwords.has(w));
 
   const queries = [];
-
-  if (cleanWords.length >= 2) {
-    queries.push(cleanWords.slice(0, 3).join(' '));
+  if (words.length >= 2) {
+    queries.push(`${words[0]} ${words[1]}`);
   }
-  if (cleanWords.length >= 1) {
-    queries.push(`${cleanWords[0]} technology`);
-    queries.push(`${cleanWords[0]} workspace`);
+  if (words.length >= 3) {
+    queries.push(`${words[0]} ${words[1]} ${words[2]}`);
+    queries.push(`${words[1]} ${words[2]}`);
   }
 
-  const nicheLower = (niche || '').toLowerCase();
-  if (nicheLower.includes('wordpress') || nicheLower.includes('web') || nicheLower.includes('code')) {
-    queries.push('web development coding', 'minimalist workspace laptop', 'software programming screen', 'clean desk computer');
-  } else if (nicheLower.includes('ai') || nicheLower.includes('intelligence') || nicheLower.includes('data')) {
-    queries.push('artificial intelligence technology', 'modern server room data', 'digital futuristic abstract', 'minimalist technology');
+  const combinedText = `${title || ''} ${topic || ''} ${niche || ''}`.toLowerCase();
+
+  // Concept-specific diverse query bundles to avoid repetitive "desk with laptop" images
+  if (combinedText.includes('community') || combinedText.includes('event') || combinedText.includes('meetup') || combinedText.includes('conference')) {
+    queries.push('modern conference hall audience', 'stage lighting event presentation', 'people networking collaboration', 'creative workshop discussion');
+  } else if (combinedText.includes('security') || combinedText.includes('protect') || combinedText.includes('safe') || combinedText.includes('vulnerability')) {
+    queries.push('cybersecurity digital lock network', 'data center server glow', 'futuristic security abstract', 'digital technology shield');
+  } else if (combinedText.includes('speed') || combinedText.includes('performance') || combinedText.includes('optimize') || combinedText.includes('vitals') || combinedText.includes('fast')) {
+    queries.push('high speed light motion blur', 'futuristic aerodynamic motion', 'light trails city velocity', 'high performance technology');
+  } else if (combinedText.includes('design') || combinedText.includes('builder') || combinedText.includes('ui') || combinedText.includes('ux') || combinedText.includes('landing page')) {
+    queries.push('creative studio color architecture', 'modern geometric abstract design', 'minimalist aesthetic architecture', 'artistic design composition');
+  } else if (combinedText.includes('ai') || combinedText.includes('artificial') || combinedText.includes('automation') || combinedText.includes('bot') || combinedText.includes('data')) {
+    queries.push('futuristic artificial intelligence glowing abstract', 'neural network glowing light', 'translucent 3d glass sphere floating', 'modern technology server data');
+  } else if (combinedText.includes('plugin') || combinedText.includes('code') || combinedText.includes('develop') || combinedText.includes('wordpress')) {
+    queries.push('creative technology architecture', 'modern software engineering abstract', 'futuristic server room neon', 'digital technology innovation');
   } else {
-    queries.push('modern technology workspace', 'clean minimal office desk', 'digital technology abstract');
+    queries.push('modern business innovation', 'minimalist architecture aesthetic', 'abstract digital technology network', 'dynamic creative leadership');
   }
 
-  queries.push('minimalist workspace desk', 'modern tech office setup', 'abstract digital technology');
   return Array.from(new Set(queries.filter(Boolean)));
+}
+
+function buildFallbackAIVisualPrompt(topic, niche, title) {
+  const combinedText = `${title || ''} ${topic || ''} ${niche || ''}`.toLowerCase();
+  let subject = 'sleek minimalist 3D geometric glass forms and subtle glowing fiber optic lines in dark architectural studio';
+
+  if (combinedText.includes('community') || combinedText.includes('event') || combinedText.includes('meetup')) {
+    subject = 'cinematic wide angle shot of modern high-tech auditorium stage with warm ambient spotlights and abstract luminous backdrop, 35mm photography';
+  } else if (combinedText.includes('security') || combinedText.includes('protect') || combinedText.includes('safe')) {
+    subject = 'translucent crystalline geometric vault floating in dark space with subtle blue cybernetic laser accents, octane 3d render';
+  } else if (combinedText.includes('speed') || combinedText.includes('performance') || combinedText.includes('optimize') || combinedText.includes('vitals')) {
+    subject = 'dynamic long-exposure supersonic golden light streams cutting through sleek minimalist dark futuristic corridor';
+  } else if (combinedText.includes('design') || combinedText.includes('ui') || combinedText.includes('ux') || combinedText.includes('builder')) {
+    subject = 'modern architectural studio installation with sculptural glass prisms casting vibrant refracted color spectrums onto pure white marble';
+  } else if (combinedText.includes('ai') || combinedText.includes('intelligence') || combinedText.includes('bot') || combinedText.includes('data')) {
+    subject = 'futuristic translucent glass spheres floating in dark architectural space with soft cinematic neon rim lighting, octane 3d render';
+  } else {
+    subject = 'minimalist modern sculptural installation with brushed aluminum and glowing optic cables, Hasselblad commercial photography';
+  }
+
+  return `Cinematic high-end commercial photograph of ${subject}, ultra-clean composition, award winning lighting, pristine, photorealistic, 8k resolution, completely blank surfaces, no text, no words, no letters, no typography, no captions, no signs, no logos, no watermarks, no writing.`;
+}
+
+async function generateVisualConcept({ topic, niche, title }, env) {
+  const fallbackKeywords = getStockPhotoQueries(topic, niche, title);
+  const fallbackPrompt = buildFallbackAIVisualPrompt(topic, niche, title);
+
+  try {
+    const prompt = `You are an elite creative director and stock photography curator.
+Generate visual concept parameters for an article with:
+Topic: "${topic}"
+Niche: "${niche}"
+Article Title: "${title || topic}"
+
+CRITICAL REQUIREMENTS:
+1. Provide 4 distinct, concrete STOCK_QUERIES (2-4 words each) describing real-world imagery, metaphors, or visual environments representing this topic (e.g. "team whiteboard collaboration", "high speed light motion", "conference stage presentation", "futuristic server data center", "sleek geometric architecture"). AVOID generic "laptop on desk" clichés!
+2. Provide a single AI_SCENE description (1-2 sentences) for a high-end commercial photograph or 3D render. Vary the subject dynamically: architectural geometry, modern team collaboration, futuristic abstract concepts, dynamic motion, macro tech details, minimalist glass/metal aesthetics. DO NOT generate simple desks or laptops. NEVER include text, words, labels, signs, or watermarks.
+
+Respond strictly in this exact format:
+STOCK_QUERIES: query 1, query 2, query 3, query 4
+AI_SCENE: <cinematic high-end commercial scene description>`;
+
+    const raw = await callTextApi([
+      { role: 'system', content: 'You are an expert art director. Output only the requested format.' },
+      { role: 'user', content: prompt }
+    ], 300, env);
+
+    const stockMatch = raw.match(/STOCK_QUERIES:\s*([^\n]+)/i);
+    const sceneMatch = raw.match(/AI_SCENE:\s*([\s\S]+?)(?=\n[A-Z_]+:|$)/i);
+
+    let stockQueries = [];
+    if (stockMatch && stockMatch[1]) {
+      stockQueries = stockMatch[1].split(',').map(q => q.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+    }
+    if (stockQueries.length === 0) {
+      stockQueries = fallbackKeywords;
+    } else {
+      stockQueries = Array.from(new Set([...stockQueries, ...fallbackKeywords]));
+    }
+
+    let aiPrompt = '';
+    if (sceneMatch && sceneMatch[1]) {
+      const scene = sceneMatch[1].trim().replace(/^["']|["']$/g, '');
+      aiPrompt = `Cinematic high-end commercial photograph of ${scene}, ultra-clean composition, Hasselblad medium format, award winning lighting, pristine, photorealistic, 8k resolution, completely blank surfaces, no text, no words, no letters, no typography, no captions, no signs, no logos, no watermarks, no writing.`;
+    } else {
+      aiPrompt = fallbackPrompt;
+    }
+
+    return { stockQueries, aiPrompt };
+  } catch (err) {
+    console.log('Visual concept generation fallback:', err.message);
+    return { stockQueries: fallbackKeywords, aiPrompt: fallbackPrompt };
+  }
+}
+
+async function fetchPexelsImage(queries, apiKey) {
+  const queryList = Array.isArray(queries) ? queries : [queries];
+  for (const q of queryList) {
+    const encoded = encodeURIComponent(q);
+    try {
+      const res = await fetch(`https://api.pexels.com/v1/search?query=${encoded}&per_page=5&orientation=landscape`, {
+        headers: { Authorization: apiKey }
+      });
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (!data.photos?.length) continue;
+
+      for (const photo of data.photos) {
+        const imageUrl = photo.src?.large2x || photo.src?.landscape || photo.src?.large || photo.src?.original;
+        if (!imageUrl) continue;
+        const imgRes = await fetch(imageUrl);
+        if (imgRes.ok) {
+          const blob = await imgRes.blob();
+          const contentType = blob.type || 'image/jpeg';
+          const ext = contentType.includes('png') ? 'png' : 'jpeg';
+          return { blob, ext, contentType };
+        }
+      }
+    } catch (e) {
+      console.log(`Pexels query "${q}" failed:`, e.message);
+    }
+  }
+  throw new Error('Could not fetch any Pexels image from candidate queries');
+}
+
+async function fetchPixabayImage(queries, apiKey) {
+  const queryList = Array.isArray(queries) ? queries : [queries];
+  for (const q of queryList) {
+    const encoded = encodeURIComponent(q);
+    try {
+      const res = await fetch(`https://pixabay.com/api/?key=${encodeURIComponent(apiKey)}&q=${encoded}&image_type=photo&orientation=horizontal&per_page=5&safesearch=true`);
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (!data.hits?.length) continue;
+
+      for (const hit of data.hits) {
+        const imageUrl = hit.largeImageURL || hit.webformatURL;
+        if (!imageUrl) continue;
+        const imgRes = await fetch(imageUrl);
+        if (imgRes.ok) {
+          const blob = await imgRes.blob();
+          const contentType = blob.type || 'image/jpeg';
+          const ext = contentType.includes('png') ? 'png' : 'jpeg';
+          return { blob, ext, contentType };
+        }
+      }
+    } catch (e) {
+      console.log(`Pixabay query "${q}" failed:`, e.message);
+    }
+  }
+  throw new Error('Could not fetch any Pixabay image from candidate queries');
 }
 
 async function fetchUnsplashImage(queries, accessKey) {
@@ -456,7 +596,9 @@ async function fetchUnsplashImage(queries, accessKey) {
         const imgRes = await fetch(imageUrl);
         if (imgRes.ok) {
           const blob = await imgRes.blob();
-          return { blob, ext: 'jpeg', contentType: blob.type || 'image/jpeg' };
+          const contentType = blob.type || 'image/jpeg';
+          const ext = contentType.includes('png') ? 'png' : 'jpeg';
+          return { blob, ext, contentType };
         }
       }
     } catch (e) {
@@ -466,21 +608,29 @@ async function fetchUnsplashImage(queries, accessKey) {
   throw new Error('Could not fetch any Unsplash image from candidate queries');
 }
 
-function buildAIVisualPrompt(topic, niche) {
-  const nicheLower = (niche || '').toLowerCase();
-  let subject = 'sleek minimalist 3D geometric glass forms and subtle glowing fiber optic lines in dark studio';
-
-  if (nicheLower.includes('wordpress') || nicheLower.includes('web') || nicheLower.includes('code')) {
-    subject = 'aesthetic modern designer workspace, clean wooden desk, glowing ambient soft monitor light, architectural minimalism, 35mm photography, shallow depth of field';
-  } else if (nicheLower.includes('ai') || nicheLower.includes('intelligence') || nicheLower.includes('data')) {
-    subject = 'futuristic translucent glass spheres floating in dark architectural space with soft cinematic neon rim lighting, octane 3d render';
+async function fetchFreeVisualFallback(prompt, queries) {
+  try {
+    const cleanPrompt = encodeURIComponent((prompt || 'modern abstract digital technology architecture landscape').slice(0, 300));
+    const seed = Math.floor(Math.random() * 1000000);
+    const url = `https://image.pollinations.ai/prompt/${cleanPrompt}?width=1200&height=675&nologo=true&seed=${seed}&model=flux`;
+    const res = await fetch(url);
+    if (res.ok) {
+      const blob = await res.blob();
+      if (blob.size > 5000) {
+        return { blob, ext: 'jpeg', contentType: 'image/jpeg' };
+      }
+    }
+  } catch (e) {
+    console.log('Free visual fallback Pollinations failed:', e.message);
   }
 
-  return `Cinematic high-end commercial photograph of ${subject}, ultra-clean composition, Hasselblad medium format, award winning lighting, completely blank surfaces, pristine, photorealistic, no text, no words, no letters, no typography, no captions, no signs, no logos, no watermarks, no writing.`;
+  throw new Error('Could not fetch free fallback image');
 }
 
-async function generateImage({ topic, niche }, env) {
-  const prompt = buildAIVisualPrompt(topic, niche);
+async function generateImage({ topic, niche, title }, env) {
+  const { stockQueries, aiPrompt } = await generateVisualConcept({ topic, niche, title }, env);
+
+  // 1. Google Imagen 3 (if Google key is provided)
   const googleKey = env.GOOGLE_API_KEY || env.GEMINI_API_KEY || env.IMAGE_API_KEY || (env.TEXT_API_URL?.includes('googleapis.com') ? env.TEXT_API_KEY : null);
 
   if (googleKey) {
@@ -498,7 +648,7 @@ async function generateImage({ topic, niche }, env) {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
-            instances: [{ prompt }],
+            instances: [{ prompt: aiPrompt }],
             parameters: {
               sampleCount: 1,
               aspectRatio: '16:9',
@@ -529,9 +679,37 @@ async function generateImage({ topic, niche }, env) {
     }
   }
 
+  // 2. Pexels Stock Photos (if PEXELS_API_KEY is configured)
+  if (env.PEXELS_API_KEY) {
+    try {
+      return await fetchPexelsImage(stockQueries, env.PEXELS_API_KEY);
+    } catch (e) {
+      console.log('Pexels stock photo failed:', e.message);
+    }
+  }
+
+  // 3. Pixabay Stock Photos (if PIXABAY_API_KEY is configured)
+  if (env.PIXABAY_API_KEY) {
+    try {
+      return await fetchPixabayImage(stockQueries, env.PIXABAY_API_KEY);
+    } catch (e) {
+      console.log('Pixabay stock photo failed:', e.message);
+    }
+  }
+
+  // 4. Unsplash Stock Photos (if UNSPLASH_ACCESS_KEY is configured)
+  if (env.UNSPLASH_ACCESS_KEY) {
+    try {
+      return await fetchUnsplashImage(stockQueries, env.UNSPLASH_ACCESS_KEY);
+    } catch (e) {
+      console.log('Unsplash stock photo failed:', e.message);
+    }
+  }
+
+  // 5. Cloudflare Workers AI (Flux 1 Schnell)
   if (env.AI) {
     try {
-      const result = await env.AI.run('@cf/black-forest-labs/flux-1-schnell', { prompt });
+      const result = await env.AI.run('@cf/black-forest-labs/flux-1-schnell', { prompt: aiPrompt });
       const b64 = result.image;
       if (typeof b64 === 'string' && b64) {
         const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
@@ -547,16 +725,14 @@ async function generateImage({ topic, niche }, env) {
     }
   }
 
-  if (env.UNSPLASH_ACCESS_KEY) {
-    try {
-      const queries = getUnsplashQueries(topic, niche);
-      return await fetchUnsplashImage(queries, env.UNSPLASH_ACCESS_KEY);
-    } catch (e) {
-      console.log('Unsplash failed:', e.message);
-    }
+  // 6. Free Open Visual Fallback
+  try {
+    return await fetchFreeVisualFallback(aiPrompt, stockQueries);
+  } catch (e) {
+    console.log('Free visual fallback failed:', e.message);
   }
 
-  throw new Error('Image generation failed. Configure Google Imagen (GOOGLE_API_KEY), Cloudflare Workers AI ([ai] binding), or UNSPLASH_ACCESS_KEY.');
+  throw new Error('Image generation failed. Configure Google Imagen (GOOGLE_API_KEY), Pexels (PEXELS_API_KEY), Pixabay (PIXABAY_API_KEY), Unsplash (UNSPLASH_ACCESS_KEY), or Cloudflare Workers AI.');
 }
 
 
@@ -1112,7 +1288,7 @@ async function runPost(body, env) {
 
   if (needsImage) {
     try {
-      const image = await generateImage({ topic, niche }, env);
+      const image = await generateImage({ topic, niche, title: text.title }, env);
       media = await uploadMediaToWordPress(wp, image);
     } catch (imgErr) {
       console.log('Image generation/upload skipped:', imgErr.message);

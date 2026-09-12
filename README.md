@@ -147,16 +147,26 @@ FROM_EMAIL = "hello@yourdomain.com"
 
 You must verify the `FROM_EMAIL` domain at https://resend.com/domains before emails can be sent to third-party addresses.
 
-### 5. Images (Google Imagen, Cloudflare Flux & Unsplash)
+### 5. Images (Google Imagen, Pexels, Pixabay, Unsplash & Cloudflare Flux)
 
-Featured images are generated using:
-1. **Google Imagen 3** (`imagen-3.0-generate-002`) if `GOOGLE_API_KEY` is provided with billing.
-2. **Cloudflare Workers AI** (`@cf/black-forest-labs/flux-1-schnell`) via the free `[ai]` binding.
-3. **Unsplash** (if `UNSPLASH_ACCESS_KEY` is set).
+Featured images are generated and sourced using a multi-provider pipeline with dynamic visual concept generation (avoiding repetitive desk/laptop photos):
+1. **Google Imagen 3** (`imagen-3.0-generate-002`) with dynamic cinematic scene prompts tailored to the topic.
+2. **Pexels Stock Photos** (if `PEXELS_API_KEY` is set).
+3. **Pixabay Stock Photos** (if `PIXABAY_API_KEY` is set).
+4. **Unsplash Stock Photos** (if `UNSPLASH_ACCESS_KEY` is set).
+5. **Cloudflare Workers AI** (`@cf/black-forest-labs/flux-1-schnell`) via the free `[ai]` binding.
+6. **Free Open Visual Fallback** (Pollinations Flux).
 
-To use Unsplash stock photos as a secondary source:
+To configure free stock photo API keys:
 
 ```bash
+# Free API key at https://www.pexels.com/api/
+npx wrangler secret put PEXELS_API_KEY
+
+# Free instant API key at https://pixabay.com/api/docs/
+npx wrangler secret put PIXABAY_API_KEY
+
+# Access key at https://unsplash.com/developers
 npx wrangler secret put UNSPLASH_ACCESS_KEY
 ```
 

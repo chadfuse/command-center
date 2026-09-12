@@ -14,6 +14,14 @@ GOOGLE_API_KEY=AIzaSy...
 # IMAGE_MODEL=imagen-3.0-generate-002
 # FALLBACK_IMAGE_MODEL=imagen-3.0-fast-generate-001
 
+# Stock Photo APIs (optional, for diverse real-world stock imagery):
+# Pexels (Free API key at https://www.pexels.com/api/):
+# PEXELS_API_KEY=...
+# Pixabay (Free instant API key at https://pixabay.com/api/docs/):
+# PIXABAY_API_KEY=...
+# Unsplash (Access key at https://unsplash.com/developers):
+# UNSPLASH_ACCESS_KEY=...
+
 # WordPress credentials for testing (also needed in .dev.vars).
 # In production, set WP_APP_PASSWORD with `wrangler secret put WP_APP_PASSWORD`.
 WP_URL=https://yourblog.com
