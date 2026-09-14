@@ -924,7 +924,7 @@ async function testFacebookConnection(env, body = {}) {
 
   // 4. Inspect Target Page Details
   const tokenToUse = pageToken || token;
-  const pageRes = await fetch(`https://graph.facebook.com/v19.0/${pageId}?fields=id,name,link,is_published,category,tasks&access_token=${tokenToUse}`);
+  const pageRes = await fetch(`https://graph.facebook.com/v19.0/${pageId}?fields=id,name,link,is_published,category&access_token=${tokenToUse}`);
   if (!pageRes.ok) {
     const errText = await pageRes.text();
     return {
