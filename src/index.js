@@ -869,6 +869,100 @@ async function testWordPressConnection(wp) {
   };
 }
 
+async function testFacebookConnection(env, body = {}) {
+  const token = (body.token || env.FACEBOOK_ACCESS_TOKEN || '').trim();
+  const pageId = (body.pageId || env.FACEBOOK_PAGE_ID || '').trim();
+
+  if (!token || !pageId) {
+    return {
+      success: false,
+      error: 'Missing Facebook configuration. Set FACEBOOK_ACCESS_TOKEN and FACEBOOK_PAGE_ID in Cloudflare secrets / vars.',
+      configured: {
+        hasToken: Boolean(token),
+        hasPageId: Boolean(pageId),
+        pageId: pageId || null,
+      },
+    };
+  }
+
+  const diagnostics = {};
+
+  // 1. Inspect Token Identity via /me
+  try {
+    const meRes = await fetch(`https://graph.facebook.com/v19.0/me?fields=id,name&access_token=${token}`);
+    if (meRes.ok) {
+      diagnostics.tokenIdentity = await meRes.json();
+    } else {
+      const errText = await meRes.text();
+      diagnostics.tokenIdentityError = `${meRes.status}: ${errText}`;
+    }
+  } catch (e) {
+    diagnostics.tokenIdentityError = e.message;
+  }
+
+  // 2. Inspect Permissions via /me/permissions
+  try {
+    const permsRes = await fetch(`https://graph.facebook.com/v19.0/me/permissions?access_token=${token}`);
+    if (permsRes.ok) {
+      const permsData = await permsRes.json();
+      diagnostics.permissions = permsData.data || [];
+    } else {
+      diagnostics.permissionsError = `${permsRes.status}: ${await permsRes.text()}`;
+    }
+  } catch (e) {
+    diagnostics.permissionsError = e.message;
+  }
+
+  // 3. Resolve Page Token
+  let pageToken;
+  try {
+    pageToken = await getFacebookPageToken(pageId, token);
+    diagnostics.resolvedPageToken = pageToken ? (pageToken === token ? 'same as provided token' : 'derived from /me/accounts') : 'none';
+  } catch (e) {
+    diagnostics.pageResolutionError = e.message;
+  }
+
+  // 4. Inspect Target Page Details
+  const tokenToUse = pageToken || token;
+  const pageRes = await fetch(`https://graph.facebook.com/v19.0/${pageId}?fields=id,name,link,is_published,category,tasks&access_token=${tokenToUse}`);
+  if (!pageRes.ok) {
+    const errText = await pageRes.text();
+    return {
+      success: false,
+      error: `Could not access Facebook Page ${pageId} (${pageRes.status}): ${errText}`,
+      diagnostics,
+    };
+  }
+
+  const pageData = await pageRes.json();
+
+  // 5. Optional publish test post if requested
+  let testPostResult = null;
+  if (body.publishTest) {
+    try {
+      const testMsg = body.message || `Test post from auto-poster: ${new Date().toISOString()}`;
+      testPostResult = await postToFacebook({
+        text: { title: 'Auto-Poster Test', socialPost: testMsg },
+        env: { ...env, FACEBOOK_ACCESS_TOKEN: token, FACEBOOK_PAGE_ID: pageId },
+        mediaUrl: body.mediaUrl || null,
+      });
+    } catch (postErr) {
+      testPostResult = { error: postErr.message };
+    }
+  }
+
+  const grantedPerms = (diagnostics.permissions || []).filter(p => p.status === 'granted').map(p => p.permission);
+
+  return {
+    success: true,
+    message: `Connected successfully to Facebook Page "${pageData.name}" (ID: ${pageData.id})`,
+    page: pageData,
+    grantedPermissions: grantedPerms,
+    diagnostics,
+    testPostResult,
+  };
+}
+
 function buildWpConfig(body, env) {
   const url = (body.wp?.url || env.WP_URL || '').trim();
   const username = (body.wp?.username || env.WP_USERNAME || '').trim();
@@ -1551,6 +1645,13 @@ function dashboardHtml(env) {
       </div>
 
       <div class="card">
+        <h2>Facebook connection</h2>
+        <p style="color:var(--muted);margin-bottom:0.75rem;font-size:0.9rem;">Test credentials, page permissions, and access to your Facebook Page.</p>
+        <button type="button" id="testFbBtn" style="background:#1877f2;color:#fff;">Test Facebook Connection</button>
+        <div id="fbTestResult" style="margin-top:0.75rem;"></div>
+      </div>
+
+      <div class="card">
         <h2>Manual post</h2>
         <form id="postForm">
           <label for="topic">Topic</label>
@@ -1600,6 +1701,28 @@ function dashboardHtml(env) {
       } finally {
         btn.disabled = false;
         btn.textContent = 'Test WordPress Connection';
+      }
+    });
+
+    document.getElementById('testFbBtn')?.addEventListener('click', async () => {
+      const btn = document.getElementById('testFbBtn');
+      const result = document.getElementById('fbTestResult');
+      btn.disabled = true;
+      btn.textContent = 'Testing connection...';
+      result.innerHTML = '';
+      try {
+        const res = await fetch('/test-facebook');
+        const data = await res.json();
+        if (data.success) {
+          result.innerHTML = '<p class="success">✅ ' + data.message + '</p><pre>' + JSON.stringify(data, null, 2) + '</pre>';
+        } else {
+          result.innerHTML = '<p class="error">❌ ' + (data.error || 'Connection failed') + '</p><pre>' + JSON.stringify(data.diagnostics || data, null, 2) + '</pre>';
+        }
+      } catch (err) {
+        result.innerHTML = '<p class="error">❌ Network error: ' + err.message + '</p>';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Test Facebook Connection';
       }
     });
 
@@ -1692,6 +1815,21 @@ export default {
       const wp = buildWpConfig({ wp: customWp }, env);
       try {
         const result = await testWordPressConnection(wp);
+        return jsonResponse(result);
+      } catch (err) {
+        return jsonResponse({ success: false, error: err.message }, 500);
+      }
+    }
+
+    if (url.pathname === '/test-facebook') {
+      let body = {};
+      if (request.method === 'POST') {
+        try {
+          body = await request.json();
+        } catch {}
+      }
+      try {
+        const result = await testFacebookConnection(env, body);
         return jsonResponse(result);
       } catch (err) {
         return jsonResponse({ success: false, error: err.message }, 500);
