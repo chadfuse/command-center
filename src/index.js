@@ -1103,45 +1103,80 @@ async function postToTikTok({ text, media, env }) {
 }
 
 async function getFacebookPageToken(pageId, token) {
-  const listRes = await fetch(`https://graph.facebook.com/v19.0/me/accounts?fields=access_token&access_token=${token}`);
-  if (listRes.ok) {
-    const data = await listRes.json();
-    const page = data.data?.find(p => p.id === pageId);
-    if (page?.access_token) return page.access_token;
+  // 1. If token is a User token, fetch /me/accounts to find the Page token
+  try {
+    const listRes = await fetch(`https://graph.facebook.com/v19.0/me/accounts?fields=id,name,access_token&access_token=${token}`);
+    if (listRes.ok) {
+      const data = await listRes.json();
+      const page = data.data?.find(p => String(p.id) === String(pageId));
+      if (page?.access_token) return page.access_token;
+    }
+  } catch (e) {
+    console.log('Facebook /me/accounts check failed:', e.message);
   }
 
-  const checkRes = await fetch(`https://graph.facebook.com/v19.0/${pageId}?fields=id&access_token=${token}`);
-  if (checkRes.ok) {
-    return token;
+  // 2. If token is already a Page Access Token or user token with direct page access
+  try {
+    const checkRes = await fetch(`https://graph.facebook.com/v19.0/${pageId}?fields=id,access_token&access_token=${token}`);
+    if (checkRes.ok) {
+      const data = await checkRes.json();
+      if (data?.access_token) return data.access_token;
+      return token;
+    }
+  } catch (e) {
+    console.log('Facebook page check failed:', e.message);
   }
 
-  throw new Error(`Could not get a valid token for Facebook Page ID ${pageId}. The token may not have pages_show_list/pages_manage_metadata, or the Page ID may be wrong.`);
+  // 3. Fallback: return token directly
+  return token;
 }
 
 async function postToFacebook({ text, env, mediaUrl }) {
   const userToken = env.FACEBOOK_ACCESS_TOKEN;
   const pageId = env.FACEBOOK_PAGE_ID;
   if (!userToken || !pageId) {
-    throw new Error('FACEBOOK_ACCESS_TOKEN and FACEBOOK_PAGE_ID not set.');
+    throw new Error('FACEBOOK_ACCESS_TOKEN and FACEBOOK_PAGE_ID not set. Please add them in Cloudflare secrets/vars.');
   }
 
   const pageToken = await getFacebookPageToken(pageId, userToken);
   const message = buildSocialPostText(text);
-  const params = new URLSearchParams({ message, access_token: pageToken });
+
+  const endpoint = mediaUrl ? 'photos' : 'feed';
+  const bodyParams = new URLSearchParams();
+  bodyParams.append('access_token', pageToken);
 
   if (mediaUrl) {
-    params.append('url', mediaUrl);
-    params.append('published', 'true');
+    bodyParams.append('url', mediaUrl);
+    bodyParams.append('caption', message);
+    bodyParams.append('published', 'true');
+  } else {
+    bodyParams.append('message', message);
   }
 
-  const endpoint = mediaUrl ? `photos` : `feed`;
-  const res = await fetch(`https://graph.facebook.com/v19.0/${pageId}/${endpoint}?${params.toString()}`, { method: 'POST' });
+  const res = await fetch(`https://graph.facebook.com/v19.0/${pageId}/${endpoint}`, {
+    method: 'POST',
+    body: bodyParams,
+  });
+
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`Facebook post failed: ${res.status} ${err}`);
+    let permsInfo = '';
+    try {
+      const permsRes = await fetch(`https://graph.facebook.com/v19.0/me/permissions?access_token=${pageToken}`);
+      if (permsRes.ok) {
+        const permsData = await permsRes.json();
+        const granted = permsData?.data?.filter(p => p.status === 'granted').map(p => p.permission).join(', ');
+        permsInfo = ` | Granted permissions: [${granted || 'none'}]`;
+      }
+    } catch {}
+    throw new Error(`Facebook post to /${endpoint} failed (${res.status}): ${err}${permsInfo}`);
   }
 
-  return await res.json();
+  const result = await res.json();
+  return {
+    id: result.id,
+    post_id: result.post_id || result.id,
+  };
 }
 
 function parseCronTopics(raw) {
