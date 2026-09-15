@@ -963,6 +963,108 @@ async function testFacebookConnection(env, body = {}) {
   };
 }
 
+async function testInstagramConnection(env, body = {}) {
+  const token = (body.token || env.INSTAGRAM_ACCESS_TOKEN || env.FACEBOOK_ACCESS_TOKEN || '').trim();
+  let accountId = (body.accountId || env.INSTAGRAM_ACCOUNT_ID || '').trim();
+
+  if (!token) {
+    return {
+      success: false,
+      error: 'Missing INSTAGRAM_ACCESS_TOKEN (or FACEBOOK_ACCESS_TOKEN) in Cloudflare secrets / vars.',
+      configured: { hasToken: false, hasAccountId: Boolean(accountId) },
+    };
+  }
+
+  const diagnostics = {};
+
+  // 1. Inspect Token Identity via /me
+  try {
+    const meRes = await fetch(`https://graph.facebook.com/v19.0/me?fields=id,name&access_token=${token}`);
+    if (meRes.ok) {
+      diagnostics.tokenIdentity = await meRes.json();
+    } else {
+      diagnostics.tokenIdentityError = `${meRes.status}: ${await meRes.text()}`;
+    }
+  } catch (e) {
+    diagnostics.tokenIdentityError = e.message;
+  }
+
+  // 2. Inspect Permissions via /me/permissions
+  try {
+    const permsRes = await fetch(`https://graph.facebook.com/v19.0/me/permissions?access_token=${token}`);
+    if (permsRes.ok) {
+      const permsData = await permsRes.json();
+      diagnostics.permissions = permsData.data || [];
+    } else {
+      diagnostics.permissionsError = `${permsRes.status}: ${await permsRes.text()}`;
+    }
+  } catch (e) {
+    diagnostics.permissionsError = e.message;
+  }
+
+  // 3. Find connected Instagram Business Accounts from Facebook Pages
+  const connectedIgAccounts = [];
+  try {
+    const accountsRes = await fetch(`https://graph.facebook.com/v19.0/me/accounts?fields=id,name,instagram_business_account{id,username,name,profile_picture_url}&access_token=${token}`);
+    if (accountsRes.ok) {
+      const accountsData = await accountsRes.json();
+      for (const page of accountsData.data || []) {
+        if (page.instagram_business_account) {
+          connectedIgAccounts.push({
+            pageId: page.id,
+            pageName: page.name,
+            instagramAccount: page.instagram_business_account,
+          });
+        }
+      }
+      diagnostics.connectedPages = (accountsData.data || []).map(p => ({
+        id: p.id,
+        name: p.name,
+        hasInstagram: Boolean(p.instagram_business_account),
+      }));
+    }
+  } catch (e) {
+    diagnostics.accountsError = e.message;
+  }
+
+  const effectiveAccountId = accountId || connectedIgAccounts[0]?.instagramAccount?.id;
+
+  if (!effectiveAccountId) {
+    return {
+      success: false,
+      error: 'No INSTAGRAM_ACCOUNT_ID provided and no connected Instagram Business Account found on your Facebook Pages. Make sure your Instagram Professional/Business account is linked to your Facebook Page in Page Settings.',
+      diagnostics,
+      connectedIgAccounts,
+    };
+  }
+
+  // 4. Inspect Target Instagram Account details
+  const igRes = await fetch(`https://graph.facebook.com/v19.0/${effectiveAccountId}?fields=id,username,name,profile_picture_url,biography,followers_count&access_token=${token}`);
+  if (!igRes.ok) {
+    const errText = await igRes.text();
+    return {
+      success: false,
+      error: `Could not access Instagram Account ${effectiveAccountId} (${igRes.status}): ${errText}`,
+      effectiveAccountId,
+      diagnostics,
+      connectedIgAccounts,
+    };
+  }
+
+  const igData = await igRes.json();
+  const grantedPerms = (diagnostics.permissions || []).filter(p => p.status === 'granted').map(p => p.permission);
+
+  return {
+    success: true,
+    message: `Connected successfully to Instagram Account "@${igData.username}" (ID: ${igData.id})`,
+    account: igData,
+    effectiveAccountId,
+    grantedPermissions: grantedPerms,
+    connectedIgAccounts,
+    diagnostics,
+  };
+}
+
 function buildWpConfig(body, env) {
   const url = (body.wp?.url || env.WP_URL || '').trim();
   const username = (body.wp?.username || env.WP_USERNAME || '').trim();
@@ -1120,31 +1222,101 @@ async function postToLinkedIn({ text, env, media }) {
 }
 
 async function postToInstagram({ text, media, env }) {
-  const token = env.INSTAGRAM_ACCESS_TOKEN;
-  const accountId = env.INSTAGRAM_ACCOUNT_ID;
-  if (!token || !accountId) {
-    throw new Error('INSTAGRAM_ACCESS_TOKEN and INSTAGRAM_ACCOUNT_ID not set.');
+  const token = (env.INSTAGRAM_ACCESS_TOKEN || env.FACEBOOK_ACCESS_TOKEN || '').trim();
+  let accountId = (env.INSTAGRAM_ACCOUNT_ID || '').trim();
+
+  if (!token) {
+    throw new Error('INSTAGRAM_ACCESS_TOKEN (or FACEBOOK_ACCESS_TOKEN) not set in Cloudflare secrets / vars.');
   }
   if (!media?.source_url) {
     throw new Error('Instagram requires a featured image. WordPress must succeed first.');
   }
 
+  // If INSTAGRAM_ACCOUNT_ID is not set, auto-discover from linked Facebook Pages
+  if (!accountId) {
+    try {
+      const accountsRes = await fetch(`https://graph.facebook.com/v19.0/me/accounts?fields=id,instagram_business_account{id}&access_token=${token}`);
+      if (accountsRes.ok) {
+        const accountsData = await accountsRes.json();
+        for (const page of accountsData.data || []) {
+          if (page.instagram_business_account?.id) {
+            accountId = page.instagram_business_account.id;
+            break;
+          }
+        }
+      }
+    } catch (e) {
+      console.log('Instagram account auto-discovery failed:', e.message);
+    }
+  }
+
+  if (!accountId) {
+    throw new Error('INSTAGRAM_ACCOUNT_ID not set and could not be auto-discovered from linked Facebook Pages.');
+  }
+
   const caption = buildSocialPostText(text);
-  const createRes = await fetch(`https://graph.facebook.com/v19.0/${accountId}/media?image_url=${encodeURIComponent(media.source_url)}&caption=${encodeURIComponent(caption)}&access_token=${token}`, { method: 'POST' });
+
+  // 1. Create Media Container using POST body (avoid URL query string length limits)
+  const createBody = new URLSearchParams();
+  createBody.append('image_url', media.source_url);
+  createBody.append('caption', caption);
+  createBody.append('access_token', token);
+
+  const createRes = await fetch(`https://graph.facebook.com/v19.0/${accountId}/media`, {
+    method: 'POST',
+    body: createBody,
+  });
+
   if (!createRes.ok) {
     const err = await createRes.text();
-    const permsRes = await fetch(`https://graph.facebook.com/v19.0/me/permissions?access_token=${token}`);
-    const permsData = permsRes.ok ? await permsRes.json() : null;
-    const granted = permsData?.data?.filter(p => p.status === 'granted').map(p => p.permission).join(', ') || 'unknown';
-    throw new Error(`Instagram media creation failed: ${createRes.status} ${err}. Granted permissions: ${granted}`);
+    let permsInfo = '';
+    try {
+      const permsRes = await fetch(`https://graph.facebook.com/v19.0/me/permissions?access_token=${token}`);
+      if (permsRes.ok) {
+        const permsData = await permsRes.json();
+        const granted = permsData?.data?.filter(p => p.status === 'granted').map(p => p.permission).join(', ') || 'unknown';
+        permsInfo = ` | Granted permissions: [${granted}]`;
+      }
+    } catch {}
+    throw new Error(`Instagram media container creation failed (${createRes.status}): ${err}${permsInfo}`);
   }
 
   const { id: creationId } = await createRes.json();
-  await new Promise(resolve => setTimeout(resolve, 10000));
-  const publishRes = await fetch(`https://graph.facebook.com/v19.0/${accountId}/media_publish?creation_id=${creationId}&access_token=${token}`, { method: 'POST' });
+
+  // 2. Poll for container readiness (up to 30s) instead of blind sleep
+  let ready = false;
+  for (let i = 0; i < 6; i++) {
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    try {
+      const statusRes = await fetch(`https://graph.facebook.com/v19.0/${creationId}?fields=status_code,status&access_token=${token}`);
+      if (statusRes.ok) {
+        const statusData = await statusRes.json();
+        if (statusData.status_code === 'FINISHED') {
+          ready = true;
+          break;
+        }
+        if (statusData.status_code === 'ERROR') {
+          throw new Error(`Instagram media container processing error: ${JSON.stringify(statusData)}`);
+        }
+      }
+    } catch (e) {
+      if (e.message.includes('processing error')) throw e;
+    }
+  }
+
+  // 3. Publish Media Container using POST body
+  const publishBody = new URLSearchParams();
+  publishBody.append('creation_id', creationId);
+  publishBody.append('access_token', token);
+
+  const publishRes = await fetch(`https://graph.facebook.com/v19.0/${accountId}/media_publish`, {
+    method: 'POST',
+    body: publishBody,
+  });
+
   if (!publishRes.ok) {
     const err = await publishRes.text();
-    throw new Error(`Instagram media publish failed: ${publishRes.status} ${err}`);
+    throw new Error(`Instagram media publish failed (${publishRes.status}): ${err}`);
   }
 
   const publishData = await publishRes.json();
@@ -1652,6 +1824,13 @@ function dashboardHtml(env) {
       </div>
 
       <div class="card">
+        <h2>Instagram connection</h2>
+        <p style="color:var(--muted);margin-bottom:0.75rem;font-size:0.9rem;">Test credentials, account linking, and permissions for your Instagram Business account.</p>
+        <button type="button" id="testIgBtn" style="background:#e1306c;color:#fff;">Test Instagram Connection</button>
+        <div id="igTestResult" style="margin-top:0.75rem;"></div>
+      </div>
+
+      <div class="card">
         <h2>Manual post</h2>
         <form id="postForm">
           <label for="topic">Topic</label>
@@ -1723,6 +1902,28 @@ function dashboardHtml(env) {
       } finally {
         btn.disabled = false;
         btn.textContent = 'Test Facebook Connection';
+      }
+    });
+
+    document.getElementById('testIgBtn')?.addEventListener('click', async () => {
+      const btn = document.getElementById('testIgBtn');
+      const result = document.getElementById('igTestResult');
+      btn.disabled = true;
+      btn.textContent = 'Testing connection...';
+      result.innerHTML = '';
+      try {
+        const res = await fetch('/test-instagram');
+        const data = await res.json();
+        if (data.success) {
+          result.innerHTML = '<p class="success">✅ ' + data.message + '</p><pre>' + JSON.stringify(data, null, 2) + '</pre>';
+        } else {
+          result.innerHTML = '<p class="error">❌ ' + (data.error || 'Connection failed') + '</p><pre>' + JSON.stringify(data.diagnostics || data, null, 2) + '</pre>';
+        }
+      } catch (err) {
+        result.innerHTML = '<p class="error">❌ Network error: ' + err.message + '</p>';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Test Instagram Connection';
       }
     });
 
@@ -1830,6 +2031,21 @@ export default {
       }
       try {
         const result = await testFacebookConnection(env, body);
+        return jsonResponse(result);
+      } catch (err) {
+        return jsonResponse({ success: false, error: err.message }, 500);
+      }
+    }
+
+    if (url.pathname === '/test-instagram') {
+      let body = {};
+      if (request.method === 'POST') {
+        try {
+          body = await request.json();
+        } catch {}
+      }
+      try {
+        const result = await testInstagramConnection(env, body);
         return jsonResponse(result);
       } catch (err) {
         return jsonResponse({ success: false, error: err.message }, 500);
