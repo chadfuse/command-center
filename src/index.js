@@ -263,13 +263,17 @@ function parseRawLlmResponse(raw) {
   return parsed;
 }
 
-async function generateText({ topic, niche }, env) {
+async function generateText({ topic, niche, includeWebsiteLink = false, websiteUrl = 'https://chadsia.com' }, env) {
+  const ctaInstruction = includeWebsiteLink
+    ? `\n- When generating SOCIAL_POST, include a natural, high-converting Call-To-Action right before the hashtags pointing to ${websiteUrl || 'https://chadsia.com'} (e.g. "👉 Explore more web design & AI insights at ${websiteUrl || 'https://chadsia.com'}").`
+    : '';
+
   const system = `You are a visionary web developer, ${niche} specialist, and high-impact content writer.
 
 IMPORTANT FORMATTING RULES:
 - Output each field label EXACTLY as shown in plain text (e.g. "TITLE: ...", "SLUG: ...").
 - NEVER format labels with markdown bold, asterisks, or headings (DO NOT write "**TITLE:**", "**BODY:**", or "## TITLE").
-- Start directly with TITLE:. Do not include conversational greetings or preamble.
+- Start directly with TITLE:. Do not include conversational greetings or preamble.${ctaInstruction}
 
 Return the content using this EXACT format:
 TITLE: <compelling, authoritative, insightful title under 60 characters. Avoid generic "Learn How" clichés>
@@ -319,8 +323,14 @@ Do not add explanations, notes, or sections outside this format.`;
     body = await expandBody({ body, title, niche }, env);
   }
 
+  // If includeWebsiteLink is enabled and body does not have link, append author bio box
+  if (includeWebsiteLink && !body.toLowerCase().includes('chadsia.com')) {
+    const authorBio = `<hr/><p><strong>About the Author:</strong> Chad Sia is a digital problem solver and WordPress & UI/UX specialist crafting high-converting websites and modern AI-powered workflows. Learn more or work together at <a href="${websiteUrl || 'https://chadsia.com'}" target="_blank" rel="noopener">chadsia.com</a>.</p>`;
+    body = `${body.trim()}\n${authorBio}`;
+  }
+
   if (!socialPost || socialPost.length < 80) {
-    socialPost = await generateSocialPost({ title, excerpt, body, niche }, env);
+    socialPost = await generateSocialPost({ title, excerpt, body, niche, includeWebsiteLink, websiteUrl }, env);
   }
 
   const tags = parsed.tags
@@ -336,6 +346,8 @@ Do not add explanations, notes, or sections outside this format.`;
     socialPost,
     tags,
     body,
+    includeWebsiteLink,
+    websiteUrl,
   };
 }
 
@@ -343,8 +355,12 @@ function countWords(html) {
   return stripHtml(html).split(/\s+/).filter(Boolean).length;
 }
 
-async function generateSocialPost({ title, excerpt, body, niche }, env) {
+async function generateSocialPost({ title, excerpt, body, niche, includeWebsiteLink = false, websiteUrl = 'https://chadsia.com' }, env) {
   const summary = excerpt || stripHtml(body).slice(0, 400);
+  const ctaRequirement = includeWebsiteLink
+    ? `\n5. Include an organic, natural 1-sentence Call-To-Action right before the hashtags linking to ${websiteUrl || 'https://chadsia.com'} (e.g. "👉 Explore more web design & AI insights at ${websiteUrl || 'https://chadsia.com'}").`
+    : '';
+
   const prompt = `Write a viral, high-engagement social media post for LinkedIn, Facebook, and Instagram about: "${title}".
 
 Core Context: ${summary}
@@ -353,7 +369,7 @@ CRITICAL RULES:
 1. Output ONLY the raw post content. NO conversational preamble (DO NOT say "Here is a post...", "Here are three posts...", or "**LinkedIn Post:**").
 2. DO NOT use markdown bold syntax like **text**. Social media platforms do not render markdown asterisks. Write clean plain text with emojis.
 3. Every 🔹 bullet item MUST be on its own line with a blank line between items.
-4. Avoid generic AI clichés like "In today's digital landscape, having a website is no longer a luxury...". Start with genuine excitement, fresh perspective, or a compelling insight.
+4. Avoid generic AI clichés like "In today's digital landscape, having a website is no longer a luxury...". Start with genuine excitement, fresh perspective, or a compelling insight.${ctaRequirement}
 
 Follow this EXACT format and spacing:
 
@@ -376,7 +392,7 @@ Follow this EXACT format and spacing:
 🌐 The future of [topic] isn't [old way]. It's about [smart modern way].
 
 [Conversational engaging question to drive comments]? 👇
-
+${includeWebsiteLink ? `\n👉 Explore more web design & AI insights at ${websiteUrl || 'https://chadsia.com'}\n` : ''}
 #[Tag1] #[Tag2] #[Tag3] #[Tag4] #[Tag5] #[Tag6] #[Tag7] #[Tag8]`;
 
   const raw = await callTextApi([
@@ -1201,11 +1217,62 @@ function formatHashtags(tags) {
   return tags.map(t => '#' + t.trim().replace(/[\s-]+/g, '').toLowerCase()).join(' ');
 }
 
-function buildSocialPostText(text) {
+const WEBSITE_CTA_VARIATIONS = [
+  '👉 Explore more web design & AI insights at https://chadsia.com',
+  '💡 Looking for tailored WordPress solutions & modern UI/UX? Visit https://chadsia.com',
+  '🚀 Discover more tools, workflows & project breakdowns at https://chadsia.com',
+  '✨ Need help modernizing your website with custom AI workflows? Check out https://chadsia.com',
+  '🔗 Dive deeper into modern web development strategies: https://chadsia.com',
+  '🛠️ Explore custom Beaver Builder & WordPress engineering: https://chadsia.com',
+  '💻 Check out recent client projects & digital solutions at https://chadsia.com',
+];
+
+const IG_CTA_VARIATIONS = [
+  '👉 Explore more web design & AI insights at chadsia.com (Link in bio)',
+  '💡 Looking for tailored WordPress solutions & modern UI/UX? Visit chadsia.com',
+  '🚀 Discover more tools, workflows & project breakdowns at chadsia.com',
+  '✨ Need help modernizing your website with custom AI workflows? Check out chadsia.com',
+  '🔗 Dive deeper into modern web design strategies: chadsia.com (Link in bio)',
+  '🛠️ Custom WordPress & UI/UX engineering: chadsia.com',
+];
+
+function getRandomWebsiteCta(platform = 'general', websiteUrl = 'https://chadsia.com') {
+  if (platform === 'instagram') {
+    return IG_CTA_VARIATIONS[Math.floor(Math.random() * IG_CTA_VARIATIONS.length)];
+  }
+  const list = WEBSITE_CTA_VARIATIONS;
+  const cta = list[Math.floor(Math.random() * list.length)];
+  if (websiteUrl && websiteUrl !== 'https://chadsia.com') {
+    return cta.replace(/https:\/\/chadsia\.com/g, websiteUrl);
+  }
+  return cta;
+}
+
+function buildSocialPostText(text, platform = 'general') {
   let content = (text.socialPost || '').trim();
   if (!content) {
     content = `${text.title}\n\n${text.excerpt || ''}`;
   }
+
+  // If website link is requested or websiteUrl is explicitly passed
+  if (text.includeWebsiteLink || text.websiteUrl) {
+    const targetUrl = text.websiteUrl || 'https://chadsia.com';
+    const domain = targetUrl.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+    const alreadyHasLink = content.toLowerCase().includes(domain.toLowerCase());
+
+    if (!alreadyHasLink) {
+      const cta = text.customCta || getRandomWebsiteCta(platform, targetUrl);
+      const lastHashIdx = content.lastIndexOf('#');
+      if (lastHashIdx > 0 && lastHashIdx > content.length - 250) {
+        const beforeHash = content.slice(0, lastHashIdx).trim();
+        const hashPart = content.slice(lastHashIdx).trim();
+        content = `${beforeHash}\n\n${cta}\n\n${hashPart}`;
+      } else {
+        content = `${content}\n\n${cta}`;
+      }
+    }
+  }
+
   if (!content.includes('#') && text.tags?.length) {
     const hashtags = formatHashtags(text.tags);
     if (hashtags) content += `\n\n${hashtags}`;
@@ -1220,7 +1287,7 @@ async function postToLinkedIn({ text, env, media }) {
   }
 
   const author = await getLinkedInAuthor(token, env);
-  const shareText = buildSocialPostText(text);
+  const shareText = buildSocialPostText(text, 'linkedin');
 
   const shareContent = {
     shareCommentary: { text: shareText },
@@ -1296,7 +1363,7 @@ async function postToInstagram({ text, media, env }) {
     throw new Error('INSTAGRAM_ACCOUNT_ID not set and could not be auto-discovered from linked Facebook Pages.');
   }
 
-  const caption = buildSocialPostText(text);
+  const caption = buildSocialPostText(text, 'instagram');
 
   // 1. Create Media Container using POST body (avoid URL query string length limits)
   const createBody = new URLSearchParams();
@@ -1447,7 +1514,7 @@ async function postToFacebook({ text, env, mediaUrl }) {
   }
 
   const pageToken = await getFacebookPageToken(pageId, userToken);
-  const message = buildSocialPostText(text);
+  const message = buildSocialPostText(text, 'facebook');
 
   const endpoint = mediaUrl ? 'photos' : 'feed';
   const bodyParams = new URLSearchParams();
@@ -1613,7 +1680,7 @@ async function refreshFacebookToken(body) {
 }
 
 async function runPost(body, env) {
-  const { topic, niche, platforms = ['wordpress'] } = body;
+  const { topic, niche, platforms = ['wordpress'], includeWebsiteLink = false, websiteUrl = 'https://chadsia.com' } = body;
   if (!topic || !niche) {
     throw new Error('Missing topic and niche.');
   }
@@ -1624,7 +1691,9 @@ async function runPost(body, env) {
     throw new Error('Missing WordPress credentials. They are needed to generate and host the featured image.');
   }
 
-  const text = await generateText({ topic, niche }, env);
+  const text = await generateText({ topic, niche, includeWebsiteLink, websiteUrl }, env);
+  text.includeWebsiteLink = includeWebsiteLink;
+  text.websiteUrl = websiteUrl;
   let media = null;
   let imageError = null;
   const results = {};
@@ -1787,8 +1856,8 @@ function loginHtml(error = '') {
 
 function dashboardHtml(env) {
   const schedules = [
-    { time: '0 8 * * 1,4', action: 'WordPress long-form post' },
-    { time: '0 10 * * *', action: 'Social post (LinkedIn, Facebook, Instagram)' },
+    { time: '0 8 * * 1,4', action: 'WordPress long-form post (includes chadsia.com author bio link)' },
+    { time: '0 10 * * *', action: 'Social post (LinkedIn, Facebook, Instagram) — 3-4x/week with chadsia.com CTA' },
     { time: '0 18 * * *', action: 'Social post (LinkedIn, Facebook, Instagram)' },
   ];
 
@@ -1841,7 +1910,7 @@ function dashboardHtml(env) {
         <ul>
           <li>Text provider: <strong>${(env.TEXT_API_URL?.includes('googleapis.com') || env.GOOGLE_API_KEY || env.GEMINI_API_KEY) ? 'Google Gemini' : (env.TEXT_API_URL?.includes('openrouter.ai') ? 'OpenRouter' : (env.TEXT_API_URL?.includes('groq.com') ? 'Groq' : 'Custom'))}</strong></li>
           <li>Primary model: <code>${env.TEXT_MODEL || 'gemini-2.5-flash'}</code></li>
-          <li>Image source: <strong>Google Imagen 3 &rarr; Cloudflare Workers AI &rarr; Unsplash</strong></li>
+          <li>Image source: <strong>Google Imagen 3 &rarr; Pexels / Pixabay &rarr; Cloudflare AI</strong></li>
           <li>Notification email: ${env.NOTIFICATION_EMAIL || '—'}</li>
         </ul>
       </div>
@@ -1895,7 +1964,12 @@ function dashboardHtml(env) {
             <option value="publish">Publish</option>
           </select>
 
-          <p style="margin-top:1rem"><button type="submit" id="submitBtn">Run now</button></p>
+          <label style="display:inline-flex;align-items:center;gap:0.5rem;margin-top:1rem;cursor:pointer;">
+            <input type="checkbox" name="includeWebsiteLink" id="includeWebsiteLink" value="true" checked style="width:auto;cursor:pointer;">
+            <span>🔗 Include link & CTA to <strong>chadsia.com</strong></span>
+          </label>
+
+          <p style="margin-top:1.25rem"><button type="submit" id="submitBtn">Run now</button></p>
         </form>
         <div id="result"></div>
       </div>
@@ -1979,10 +2053,13 @@ function dashboardHtml(env) {
 
       const form = e.target;
       const platforms = Array.from(form.querySelectorAll('input[name="platforms"]:checked')).map(cb => cb.value);
+      const includeWebsiteLink = form.includeWebsiteLink ? form.includeWebsiteLink.checked : false;
       const body = {
         topic: form.topic.value,
         niche: form.niche.value,
         platforms,
+        includeWebsiteLink,
+        websiteUrl: 'https://chadsia.com',
         wp: { status: form.wpStatus.value }
       };
 
@@ -2147,7 +2224,7 @@ export default {
   },
 
   async scheduled(event, env) {
-    const niche = env.CRON_NICHE || 'wordpress development';
+    const niche = env.CRON_NICHE || 'AI and WordPress development';
     const topic = await getUniqueTopic(env);
     if (!topic) {
       console.log('No unique topic available; skipping scheduled post');
@@ -2156,25 +2233,40 @@ export default {
 
     let platforms;
     let status;
+    let includeWebsiteLink = false;
+    const dayOfWeek = new Date().getUTCDay(); // 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat
 
     if (event.cron === '0 8 * * 1,4') {
+      // Monday & Thursday WordPress blog posts
       platforms = ['wordpress'];
       status = env.CRON_WP_STATUS || 'publish';
+      includeWebsiteLink = true; // Include author CTA backlink in published blog posts
     } else if (event.cron === '0 10 * * *' || event.cron === '0 18 * * *') {
+      // Social posts (LinkedIn, Facebook, Instagram)
       platforms = ['linkedin', 'facebook', 'instagram'];
       status = env.WP_STATUS || 'draft';
+
+      // 3 to 4 times a week linking to chadsia.com:
+      // Designated core days: Sunday (0), Monday (1), Wednesday (3), Friday (5) on the 10:00 UTC run
+      const targetDays = [0, 1, 3, 5];
+      if (event.cron === '0 10 * * *' && targetDays.includes(dayOfWeek)) {
+        includeWebsiteLink = true;
+      } else if (Math.random() < 0.20) {
+        // ~20% random chance across other slots for natural organic variation
+        includeWebsiteLink = true;
+      }
     } else {
       console.log('Unknown cron expression:', event.cron);
       return;
     }
 
     try {
-      const result = await runPost({ topic, niche, platforms, wp: { status } }, env);
+      const result = await runPost({ topic, niche, platforms, includeWebsiteLink, websiteUrl: 'https://chadsia.com', wp: { status } }, env);
       await markTopicPosted(env, topic);
       console.log('Scheduled post succeeded:', JSON.stringify(result));
       const detail = JSON.stringify(result, null, 2);
       await sendNotification({
-        subject: `Auto-poster scheduled: posted to ${Object.keys(result.results || {}).join(', ')}`,
+        subject: `Auto-poster scheduled: posted to ${Object.keys(result.results || {}).join(', ')}${includeWebsiteLink ? ' (with chadsia.com link)' : ''}`,
         html: buildEmailHtml(topic, 'Success', detail),
         text: detail,
       }, env);
