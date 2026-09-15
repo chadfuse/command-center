@@ -1066,6 +1066,7 @@ async function testInstagramConnection(env, body = {}) {
     };
   }
 
+  const igData = await igRes.json();
   const grantedPerms = (diagnostics.permissions || []).filter(p => p.status === 'granted').map(p => p.permission);
 
   // 5. Optional publish test post if requested
