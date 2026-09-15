@@ -963,8 +963,23 @@ async function testFacebookConnection(env, body = {}) {
   };
 }
 
+async function getEffectiveInstagramToken(env, manualToken) {
+  if (manualToken) return manualToken.trim();
+  const candidates = [env.INSTAGRAM_ACCESS_TOKEN, env.FACEBOOK_ACCESS_TOKEN]
+    .filter(Boolean)
+    .map(t => t.trim());
+
+  for (const t of candidates) {
+    try {
+      const res = await fetch(`https://graph.facebook.com/v19.0/me?fields=id&access_token=${t}`);
+      if (res.ok) return t;
+    } catch {}
+  }
+  return candidates[0] || '';
+}
+
 async function testInstagramConnection(env, body = {}) {
-  const token = (body.token || env.INSTAGRAM_ACCESS_TOKEN || env.FACEBOOK_ACCESS_TOKEN || '').trim();
+  const token = await getEffectiveInstagramToken(env, body.token);
   let accountId = (body.accountId || env.INSTAGRAM_ACCOUNT_ID || '').trim();
 
   if (!token) {
@@ -1222,7 +1237,7 @@ async function postToLinkedIn({ text, env, media }) {
 }
 
 async function postToInstagram({ text, media, env }) {
-  const token = (env.INSTAGRAM_ACCESS_TOKEN || env.FACEBOOK_ACCESS_TOKEN || '').trim();
+  const token = await getEffectiveInstagramToken(env);
   let accountId = (env.INSTAGRAM_ACCOUNT_ID || '').trim();
 
   if (!token) {
