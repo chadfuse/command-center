@@ -1066,8 +1066,33 @@ async function testInstagramConnection(env, body = {}) {
     };
   }
 
-  const igData = await igRes.json();
   const grantedPerms = (diagnostics.permissions || []).filter(p => p.status === 'granted').map(p => p.permission);
+
+  // 5. Optional publish test post if requested
+  let testPostResult = null;
+  if (body.publishTest) {
+    try {
+      const wp = buildWpConfig(body, env);
+      let mediaUrl = body.mediaUrl;
+      if (!mediaUrl) {
+        const image = await generateImage({
+          topic: body.topic || 'How AI is Revolutionizing Modern Web Design',
+          niche: body.niche || 'AI and WordPress development',
+          title: 'How AI is Revolutionizing Modern Web Design',
+        }, env);
+        const media = await uploadMediaToWordPress(wp, image);
+        mediaUrl = media.source_url;
+      }
+      const testMsg = body.message || `🚀 How AI is Revolutionizing Modern Web Design ✨\n\nAI is transforming the way we build and design responsive, high-converting websites.\n\n🔹 Smart design automation\n🔹 Predictive UX workflows\n🔹 Faster development cycles\n\nWhat is your favorite AI design tool? 👇\n\n#WebDesign #WordPress #AI #TechTrends`;
+      testPostResult = await postToInstagram({
+        text: { title: 'How AI is Revolutionizing Modern Web Design', socialPost: testMsg },
+        media: { source_url: mediaUrl },
+        env: { ...env, INSTAGRAM_ACCESS_TOKEN: token, INSTAGRAM_ACCOUNT_ID: effectiveAccountId },
+      });
+    } catch (postErr) {
+      testPostResult = { error: postErr.message };
+    }
+  }
 
   return {
     success: true,
@@ -1077,6 +1102,7 @@ async function testInstagramConnection(env, body = {}) {
     grantedPermissions: grantedPerms,
     connectedIgAccounts,
     diagnostics,
+    testPostResult,
   };
 }
 
